@@ -33,6 +33,14 @@ from boltz.data.write.writer import BoltzAffinityWriter, BoltzWriter
 from boltz.model.models.boltz1 import Boltz1
 from boltz.model.models.boltz2 import Boltz2
 
+# Inspection hook (import at module level for optional use)
+try:
+    from inspection.inspect_submodules import inspect_model_and_data
+    from inspection.run_submodules import run_submodules_step_by_step
+    _INSPECTION_AVAILABLE = True
+except ImportError:
+    _INSPECTION_AVAILABLE = False
+
 CCD_URL = "https://huggingface.co/boltz-community/boltz-1/resolve/main/ccd.pkl"
 MOL_URL = "https://huggingface.co/boltz-community/boltz-2/resolve/main/mols.tar"
 
@@ -1324,6 +1332,20 @@ def predict(  # noqa: C901, PLR0915, PLR0912
             steering_args=asdict(steering_args),
         )
         model_module.eval()
+
+        # Capture data for inspection (if inspection module is available)
+        # Set a breakpoint inside inspect_model_and_data to explore model/data
+        if _INSPECTION_AVAILABLE:
+            inspection_result = inspect_model_and_data(model_module, data_module)
+            # Run submodules step by step for detailed inspection
+            # Set a breakpoint here to explore intermediate outputs
+            submodule_outputs = run_submodules_step_by_step(
+                model=inspection_result['model'],
+                batch=inspection_result['batch'],
+                recycling_steps=0,
+                num_sampling_steps=predict_args["sampling_steps"],
+                verbose=True,
+            )
 
         # Compute structure predictions
         trainer.predict(
