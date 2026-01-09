@@ -15,7 +15,7 @@ from pytorch_lightning import LightningModule
 def run_submodules_step_by_step(
     model: LightningModule,
     batch: dict[str, Tensor],
-    recycling_steps: int = 0,
+    recycling_steps: Optional[int] = None,
     num_sampling_steps: Optional[int] = None,
     verbose: bool = True,
 ) -> dict[str, Any]:
@@ -30,10 +30,10 @@ def run_submodules_step_by_step(
         The Boltz model (Boltz1 or Boltz2).
     batch : dict[str, Tensor]
         The input batch from inspect_model_and_data.
-    recycling_steps : int
-        Number of recycling iterations (default 0).
+    recycling_steps : Optional[int]
+        Number of recycling iterations. If None, uses model's predict_args.
     num_sampling_steps : Optional[int]
-        Number of diffusion sampling steps. If None, uses model defaults.
+        Number of diffusion sampling steps. If None, uses model's predict_args.
     verbose : bool
         Print progress messages.
 
@@ -52,6 +52,13 @@ def run_submodules_step_by_step(
         - 'structure_output': Structure predictions (if run)
         - 'confidence_output': Confidence predictions (if available)
     """
+    # Get default parameters from model's predict_args if not provided
+    predict_args = getattr(model, 'predict_args', {}) or {}
+    if recycling_steps is None:
+        recycling_steps = predict_args.get('recycling_steps', 0)
+    if num_sampling_steps is None:
+        num_sampling_steps = predict_args.get('sampling_steps', None)
+
     outputs = {}
     model.eval()
 

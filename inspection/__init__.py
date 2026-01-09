@@ -35,6 +35,11 @@ from inspection.run_submodules import (
     run_single_submodule,
     print_submodule_outputs_summary,
 )
+from inspection.compare_outputs import (
+    compare_step_by_step_vs_forward,
+    verify_submodule_outputs,
+    compare_tensors,
+)
 
 __all__ = [
     # Data loading
@@ -67,4 +72,8 @@ __all__ = [
     "run_submodules_step_by_step",
     "run_single_submodule",
     "print_submodule_outputs_summary",
+    # Output comparison
+    "compare_step_by_step_vs_forward",
+    "verify_submodule_outputs",
+    "compare_tensors",
 ]

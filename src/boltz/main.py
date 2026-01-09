@@ -37,6 +37,7 @@ from boltz.model.models.boltz2 import Boltz2
 try:
     from inspection.inspect_submodules import inspect_model_and_data
     from inspection.run_submodules import run_submodules_step_by_step
+    from inspection.compare_outputs import compare_step_by_step_vs_forward
     _INSPECTION_AVAILABLE = True
 except ImportError:
     _INSPECTION_AVAILABLE = False
@@ -1338,14 +1339,19 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         if _INSPECTION_AVAILABLE:
             inspection_result = inspect_model_and_data(model_module, data_module)
             # Run submodules step by step for detailed inspection
-            # Set a breakpoint here to explore intermediate outputs
+            # Uses model's predict_args for recycling_steps and sampling_steps
             submodule_outputs = run_submodules_step_by_step(
                 model=inspection_result['model'],
                 batch=inspection_result['batch'],
-                recycling_steps=0,
-                num_sampling_steps=predict_args["sampling_steps"],
                 verbose=True,
             )
+            # Compare step-by-step outputs vs forward pass to verify correctness
+            comparison_result = compare_step_by_step_vs_forward(
+                model=inspection_result['model'],
+                batch=inspection_result['batch'],
+                verbose=True,
+            )
+            # Set a breakpoint here to explore intermediate outputs
 
         # Compute structure predictions
         trainer.predict(
