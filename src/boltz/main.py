@@ -34,13 +34,22 @@ from boltz.model.models.boltz1 import Boltz1
 from boltz.model.models.boltz2 import Boltz2
 
 # Inspection hook (import at module level for optional use)
-try:
-    from inspection.inspect_submodules import inspect_model_and_data
-    from inspection.run_submodules import run_submodules_step_by_step
-    from inspection.compare_outputs import compare_step_by_step_vs_forward
-    _INSPECTION_AVAILABLE = True
-except ImportError:
-    _INSPECTION_AVAILABLE = False
+# The inspection module is at the repo root, not inside the package
+# We need to add the repo root to sys.path to find it
+import sys
+_INSPECTION_AVAILABLE = False
+_boltz_repo_root = Path(__file__).parent.parent.parent  # src/boltz/main.py -> repo root
+_inspection_path = _boltz_repo_root / "inspection"
+if _inspection_path.exists():
+    sys.path.insert(0, str(_boltz_repo_root))
+    try:
+        from inspection.inspect_submodules import inspect_model_and_data
+        from inspection.run_submodules import run_submodules_step_by_step
+        from inspection.compare_outputs import compare_step_by_step_vs_forward
+        from inspection.write_submodule_outputs import write_submodule_outputs
+        _INSPECTION_AVAILABLE = True
+    except ImportError:
+        pass
 
 CCD_URL = "https://huggingface.co/boltz-community/boltz-1/resolve/main/ccd.pkl"
 MOL_URL = "https://huggingface.co/boltz-community/boltz-2/resolve/main/mols.tar"
@@ -1048,6 +1057,11 @@ def cli() -> None:
     is_flag=True,
     help=" to dump the s and z embeddings into a npz file. Default is False.",
 )
+@click.option(
+    "--step_by_step",
+    is_flag=True,
+    help="Run the model step by step, saving intermediate submodule outputs. Default is False.",
+)
 def predict(  # noqa: C901, PLR0915, PLR0912
     data: str,
     out_dir: str,
@@ -1086,6 +1100,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     num_subsampled_msa: int = 1024,
     no_kernels: bool = False,
     write_embeddings: bool = False,
+    step_by_step: bool = False,
 ) -> None:
     """Run predictions with Boltz."""
     # If cpu, write a friendly warning
@@ -1334,10 +1349,26 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         )
         model_module.eval()
 
-        # Capture data for inspection (if inspection module is available)
-        # Set a breakpoint inside inspect_model_and_data to explore model/data
-        if _INSPECTION_AVAILABLE:
-            inspection_result = inspect_model_and_data(model_module, data_module)
+        # Run step-by-step mode if requested
+        if step_by_step:
+            if not _INSPECTION_AVAILABLE:
+                msg = (
+                    "Step-by-step mode requires the inspection module. "
+                    "Make sure the inspection package is available."
+                )
+                raise click.ClickException(msg)
+
+            click.echo("\nRunning step-by-step prediction mode\n")
+            # Move model to GPU if available (model is loaded on CPU by default)
+            if accelerator == "gpu" and torch.cuda.is_available():
+                model_device = torch.device("cuda:0")
+                model_module = model_module.to(model_device)
+                click.echo(f"Model moved to {model_device}")
+            else:
+                model_device = torch.device("cpu")
+            inspection_result = inspect_model_and_data(
+                model_module, data_module, device=model_device
+            )
             # Run submodules step by step for detailed inspection
             # Uses model's predict_args for recycling_steps and sampling_steps
             submodule_outputs = run_submodules_step_by_step(
@@ -1345,20 +1376,27 @@ def predict(  # noqa: C901, PLR0915, PLR0912
                 batch=inspection_result['batch'],
                 verbose=True,
             )
-            # Compare step-by-step outputs vs forward pass to verify correctness
-            comparison_result = compare_step_by_step_vs_forward(
-                model=inspection_result['model'],
+            # Write submodule outputs to from_submodules folder
+            write_submodule_outputs(
+                submodule_outputs=submodule_outputs,
                 batch=inspection_result['batch'],
+                output_dir=out_dir / "predictions",
+                data_dir=processed.targets_dir,
+                output_format=output_format,
+                boltz2=(model == "boltz2"),
+                write_embeddings=write_embeddings,
+                write_confidence=True,
+                write_pae=write_full_pae,
+                write_pde=write_full_pde,
                 verbose=True,
             )
-            # Set a breakpoint here to explore intermediate outputs
-
-        # Compute structure predictions
-        trainer.predict(
-            model_module,
-            datamodule=data_module,
-            return_predictions=False,
-        )
+        else:
+            # Compute structure predictions using normal forward pass
+            trainer.predict(
+                model_module,
+                datamodule=data_module,
+                return_predictions=False,
+            )
 
     # Check if affinity predictions are needed
     if any(r.affinity for r in manifest.records):

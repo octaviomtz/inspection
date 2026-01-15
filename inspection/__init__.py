@@ -35,6 +35,9 @@ from inspection.run_submodules import (
     run_single_submodule,
     print_submodule_outputs_summary,
 )
+from inspection.write_submodule_outputs import (
+    write_submodule_outputs,
+)
 from inspection.compare_outputs import (
     compare_step_by_step_vs_forward,
     verify_submodule_outputs,
@@ -72,6 +75,8 @@ __all__ = [
     "run_submodules_step_by_step",
     "run_single_submodule",
     "print_submodule_outputs_summary",
+    # Write submodule outputs
+    "write_submodule_outputs",
     # Output comparison
     "compare_step_by_step_vs_forward",
     "verify_submodule_outputs",
