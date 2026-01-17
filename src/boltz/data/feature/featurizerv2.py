@@ -2157,6 +2157,127 @@ def process_contact_feature_constraints(
     }
 
 
+# Predefined CDR3 conformations with target psi angle ranges (in radians)
+# Psi angle = dihedral(N-CA-C-N')
+CDR3_CONFORMATIONS = {
+    # Extended conformation: characteristic of elongated CDR3 loops
+    "extended": {"lower": 2.09, "upper": 2.79},  # ~120° to ~160°
+    # Compact conformation: tight turn, common in shorter CDR3 loops
+    "compact": {"lower": -1.05, "upper": -0.35},  # ~-60° to ~-20°
+    # Kinked conformation: sharp bend, often at CDR3 apex
+    "kinked": {"lower": -0.35, "upper": 0.35},  # ~-20° to ~20°
+}
+
+
+def process_cdr3_feature_constraints(
+    data: Tokenized,
+    inference_cdr3_constraints: list[tuple[int, int, int, str, bool, list[float], list[float]]],
+):
+    """Process CDR3 conformation constraints.
+
+    Creates dihedral angle features for steering CDR3 backbone psi angles toward
+    target conformations.
+
+    Parameters
+    ----------
+    data : Tokenized
+        The tokenized input data.
+    inference_cdr3_constraints : list
+        List of CDR3 constraints. Each tuple contains:
+        (chain_id, start_res, end_res, conformation, force, lower_bounds, upper_bounds)
+
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - cdr3_dihedral_index: [4, N] tensor of atom indices for psi dihedrals
+        - cdr3_target_lower: [N] tensor of lower angle bounds (radians)
+        - cdr3_target_upper: [N] tensor of upper angle bounds (radians)
+    """
+    token_data = data.tokens
+    structure = data.structure
+
+    dihedral_indices = []
+    target_lower = []
+    target_upper = []
+
+    for chain_id, start_res, end_res, conformation, force, custom_lower, custom_upper in inference_cdr3_constraints:
+        if not force:
+            continue
+
+        # Find tokens for this chain
+        chain_tokens = [t for t in token_data if t["asym_id"] == chain_id]
+        if not chain_tokens:
+            continue
+
+        # Filter to CDR3 residues (must be protein type)
+        cdr3_tokens = [
+            t for t in chain_tokens
+            if start_res <= t["res_idx"] <= end_res
+            and t["mol_type"] == const.chain_type_ids["PROTEIN"]
+        ]
+
+        if len(cdr3_tokens) < 2:
+            continue
+
+        # Sort by residue index
+        cdr3_tokens = sorted(cdr3_tokens, key=lambda t: t["res_idx"])
+
+        # Get target angle bounds based on conformation type
+        if conformation == "custom":
+            # Custom angles are provided in degrees, convert to radians
+            conf_lower = [math.radians(a) for a in custom_lower]
+            conf_upper = [math.radians(a) for a in custom_upper]
+        else:
+            conf_data = CDR3_CONFORMATIONS[conformation]
+            conf_lower = [conf_data["lower"]] * (len(cdr3_tokens) - 1)
+            conf_upper = [conf_data["upper"]] * (len(cdr3_tokens) - 1)
+
+        # For each consecutive pair of residues, create psi dihedral constraint
+        # Psi dihedral: N(i) - CA(i) - C(i) - N(i+1)
+        for i in range(len(cdr3_tokens) - 1):
+            token_i = cdr3_tokens[i]
+            token_i_next = cdr3_tokens[i + 1]
+
+            # Get atom indices within each token
+            # For standard amino acids: N=0, CA=1, C=2, O=3 (from const.protein_backbone_atom_index)
+            atom_start_i = token_i["atom_idx"]
+            atom_start_next = token_i_next["atom_idx"]
+
+            # Psi dihedral: N(i), CA(i), C(i), N(i+1)
+            # N is index 0, CA is index 1, C is index 2 within each residue
+            n_i = atom_start_i + 0  # N
+            ca_i = atom_start_i + 1  # CA
+            c_i = atom_start_i + 2  # C
+            n_i_next = atom_start_next + 0  # N of next residue
+
+            dihedral_indices.append([n_i, ca_i, c_i, n_i_next])
+
+            # Add target bounds
+            if i < len(conf_lower):
+                target_lower.append(conf_lower[i])
+                target_upper.append(conf_upper[i])
+            else:
+                # Default to last bounds if not enough provided
+                target_lower.append(conf_lower[-1])
+                target_upper.append(conf_upper[-1])
+
+    if len(dihedral_indices) > 0:
+        dihedral_index = torch.tensor(dihedral_indices, dtype=torch.long).T  # [4, N]
+        lower_bounds = torch.tensor(target_lower, dtype=torch.float32)
+        upper_bounds = torch.tensor(target_upper, dtype=torch.float32)
+    else:
+        dihedral_index = torch.empty((4, 0), dtype=torch.long)
+        lower_bounds = torch.empty((0,), dtype=torch.float32)
+        upper_bounds = torch.empty((0,), dtype=torch.float32)
+
+    return {
+        "cdr3_dihedral_index": dihedral_index,
+        "cdr3_target_lower": lower_bounds,
+        "cdr3_target_upper": upper_bounds,
+    }
+
+
 class Boltz2Featurizer:
     """Boltz2 featurizer."""
 
@@ -2199,6 +2320,9 @@ class Boltz2Featurizer:
         ] = None,
         inference_contact_constraints: Optional[
             list[tuple[tuple[int, int], tuple[int, int], float]]
+        ] = None,
+        inference_cdr3_constraints: Optional[
+            list[tuple[int, int, int, str, bool, list[float], list[float]]]
         ] = None,
         compute_affinity: bool = False,
     ) -> dict[str, Tensor]:
@@ -2330,6 +2454,7 @@ class Boltz2Featurizer:
         residue_constraint_features = {}
         chain_constraint_features = {}
         contact_constraint_features = {}
+        cdr3_constraint_features = {}
         if compute_constraint_features:
             residue_constraint_features = process_residue_constraint_features(data)
             chain_constraint_features = process_chain_feature_constraints(data)
@@ -2337,6 +2462,10 @@ class Boltz2Featurizer:
                 data=data,
                 inference_pocket_constraints=inference_pocket_constraints if inference_pocket_constraints else [],
                 inference_contact_constraints=inference_contact_constraints if inference_contact_constraints else [],
+            )
+            cdr3_constraint_features = process_cdr3_feature_constraints(
+                data=data,
+                inference_cdr3_constraints=inference_cdr3_constraints if inference_cdr3_constraints else [],
             )
 
         return {
@@ -2350,5 +2479,6 @@ class Boltz2Featurizer:
             **residue_constraint_features,
             **chain_constraint_features,
             **contact_constraint_features,
+            **cdr3_constraint_features,
             **ligand_to_mw,
         }

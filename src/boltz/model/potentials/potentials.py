@@ -667,6 +667,56 @@ class ContactPotentital(FlatBottomPotential, DistancePotential):
         )
 
 
+class CDR3ConformationPotential(FlatBottomPotential, DihedralPotential):
+    """Potential to control CDR3 loop conformations via backbone psi dihedral angles.
+
+    This potential allows steering CDR3 regions toward specific conformations by
+    constraining psi angles (N-CA-C-N') to target ranges. Common CDR3 conformations:
+
+    - extended: psi ≈ 140° (2.44 rad) - elongated loop
+    - compact: psi ≈ -40° (-0.70 rad) - tight turn
+    - kinked: psi ≈ 0° - sharp bend (often at apex)
+    - custom: user-specified angle ranges
+
+    Features expected in feats:
+    - cdr3_dihedral_index: [4, N] tensor of atom indices (N, CA, C, N') for psi dihedrals
+    - cdr3_target_lower: [N] tensor of lower angle bounds (radians)
+    - cdr3_target_upper: [N] tensor of upper angle bounds (radians)
+    """
+
+    def compute_args(self, feats, parameters):
+        # Check if CDR3 features are present
+        if "cdr3_dihedral_index" not in feats:
+            return torch.empty([4, 0], device=feats["atom_pad_mask"].device), (
+                torch.empty([0]),
+                None,
+                None,
+            ), None, None, None
+
+        dihedral_index = feats["cdr3_dihedral_index"][0]  # [4, N_dihedrals]
+
+        if dihedral_index.shape[1] == 0:
+            return dihedral_index, (
+                torch.empty([0], device=dihedral_index.device),
+                None,
+                None,
+            ), None, None, None
+
+        # Get target angle bounds
+        lower_bounds = feats["cdr3_target_lower"][0].clone()  # [N_dihedrals]
+        upper_bounds = feats["cdr3_target_upper"][0].clone()  # [N_dihedrals]
+
+        # Apply buffer from parameters (allows some flexibility)
+        if "buffer" in parameters:
+            lower_bounds = lower_bounds - parameters["buffer"]
+            upper_bounds = upper_bounds + parameters["buffer"]
+
+        # Spring constant for energy penalty
+        k = torch.ones_like(lower_bounds)
+
+        return dihedral_index, (k, lower_bounds, upper_bounds), None, None, None
+
+
 def get_potentials(steering_args, boltz2=False):
     potentials = []
     if steering_args["fk_steering"] or steering_args["physical_guidance_update"]:
@@ -783,5 +833,23 @@ def get_potentials(steering_args, boltz2=False):
                     }
                 ),
             ]
+        )
+    # Add CDR3 conformation potential if enabled
+    if boltz2 and steering_args.get("cdr3_steering", False):
+        potentials.append(
+            CDR3ConformationPotential(
+                parameters={
+                    "guidance_interval": 2,
+                    "guidance_weight": (
+                        PiecewiseStepFunction(
+                            thresholds=[0.3, 0.7], values=[0.5, 1.0, 0.5]
+                        )
+                        if steering_args["physical_guidance_update"]
+                        else 0.0
+                    ),
+                    "resampling_weight": 1.0,
+                    "buffer": 0.35,  # ~20 degrees flexibility
+                }
+            )
         )
     return potentials

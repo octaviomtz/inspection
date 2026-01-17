@@ -527,6 +527,12 @@ class InferenceOptions:
     contact_constraints: Optional[
         list[tuple[tuple[int, int], tuple[int, int], float, bool]]
     ] = None
+    # CDR3 constraints: (chain_id, start_res, end_res, conformation, force, lower_bounds, upper_bounds)
+    # conformation is one of: "extended", "compact", "kinked", "custom"
+    # lower_bounds/upper_bounds are optional lists of floats (radians) for custom conformations
+    cdr3_constraints: Optional[
+        list[tuple[int, int, int, str, bool, Optional[list[float]], Optional[list[float]]]]
+    ] = None
 
 
 @dataclass(frozen=True)

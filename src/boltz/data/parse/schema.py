@@ -1512,6 +1512,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
     connections = []
     pocket_constraints = []
     contact_constraints = []
+    cdr3_constraints = []
     constraints = schema.get("constraints", [])
     for constraint in constraints:
         if "bond" in constraint:
@@ -1592,6 +1593,41 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
             force = constraint["contact"].get("force", False)
 
             contact_constraints.append((token1, token2, max_distance, force))
+        elif "cdr3_conformation" in constraint:
+            if not boltz_2:
+                msg = "CDR3 conformation constraint is not supported in Boltz-1!"
+                raise ValueError(msg)
+
+            cdr3_data = constraint["cdr3_conformation"]
+            if "chain_id" not in cdr3_data or "start_res" not in cdr3_data or "end_res" not in cdr3_data:
+                msg = "CDR3 conformation constraint requires chain_id, start_res, and end_res"
+                raise ValueError(msg)
+
+            chain_name = cdr3_data["chain_id"]
+            if chain_name not in chain_to_idx:
+                msg = f"CDR3 chain {chain_name} not found in input!"
+                raise ValueError(msg)
+
+            chain_id = chain_to_idx[chain_name]
+            start_res = cdr3_data["start_res"] - 1  # Convert to 0-indexed
+            end_res = cdr3_data["end_res"] - 1  # Convert to 0-indexed
+
+            conformation = cdr3_data.get("conformation", "extended")
+            if conformation not in ["extended", "compact", "kinked", "custom"]:
+                msg = f"Invalid CDR3 conformation: {conformation}. Must be one of: extended, compact, kinked, custom"
+                raise ValueError(msg)
+
+            force = cdr3_data.get("force", True)
+
+            # Custom angle bounds (in degrees, will be converted to radians in featurizer)
+            lower_bounds = cdr3_data.get("psi_lower", None)
+            upper_bounds = cdr3_data.get("psi_upper", None)
+
+            if conformation == "custom" and (lower_bounds is None or upper_bounds is None):
+                msg = "Custom CDR3 conformation requires psi_lower and psi_upper bounds"
+                raise ValueError(msg)
+
+            cdr3_constraints.append((chain_id, start_res, end_res, conformation, force, lower_bounds, upper_bounds))
         else:
             msg = f"Invalid constraint: {constraint}"
             raise ValueError(msg)
@@ -1804,7 +1840,9 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
         chain_infos.append(chain_info)
 
     options = InferenceOptions(
-        pocket_constraints=pocket_constraints, contact_constraints=contact_constraints
+        pocket_constraints=pocket_constraints,
+        contact_constraints=contact_constraints,
+        cdr3_constraints=cdr3_constraints if cdr3_constraints else None,
     )
     record = Record(
         id=name,

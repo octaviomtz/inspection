@@ -172,6 +172,7 @@ class BoltzSteeringParams:
     fk_resampling_interval: int = 3
     physical_guidance_update: bool = False
     contact_guidance_update: bool = True
+    cdr3_steering: bool = False
     num_gd_steps: int = 20
 
 
@@ -989,6 +990,12 @@ def cli() -> None:
     help="Whether to use potentials for steering. Default is False.",
 )
 @click.option(
+    "--cdr3_steering",
+    is_flag=True,
+    help="Enable CDR3 conformation steering via backbone dihedral angle potentials. "
+         "Requires --use_potentials. Define CDR3 regions using cdr3_conformation constraints in YAML.",
+)
+@click.option(
     "--model",
     default="boltz2",
     type=click.Choice(["boltz1", "boltz2"]),
@@ -1091,6 +1098,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     api_key_header: Optional[str] = None,
     api_key_value: Optional[str] = None,
     use_potentials: bool = False,
+    cdr3_steering: bool = False,
     model: Literal["boltz1", "boltz2"] = "boltz2",
     method: Optional[str] = None,
     affinity_mw_correction: Optional[bool] = False,
@@ -1333,6 +1341,12 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         steering_args = BoltzSteeringParams()
         steering_args.fk_steering = use_potentials
         steering_args.physical_guidance_update = use_potentials
+        steering_args.cdr3_steering = cdr3_steering
+
+        # Validate CDR3 steering requires potentials
+        if cdr3_steering and not use_potentials:
+            msg = "CDR3 steering (--cdr3_steering) requires potentials to be enabled (--use_potentials)"
+            raise click.UsageError(msg)
 
         model_cls = Boltz2 if model == "boltz2" else Boltz1
         model_module = model_cls.load_from_checkpoint(
