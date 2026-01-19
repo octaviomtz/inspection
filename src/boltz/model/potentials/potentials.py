@@ -685,10 +685,13 @@ class CDR3ConformationPotential(FlatBottomPotential, DihedralPotential):
     """
 
     def compute_args(self, feats, parameters):
+        # Get device from feats for consistent tensor placement
+        device = feats["atom_pad_mask"].device
+
         # Check if CDR3 features are present
         if "cdr3_dihedral_index" not in feats:
-            return torch.empty([4, 0], device=feats["atom_pad_mask"].device), (
-                torch.empty([0]),
+            return torch.empty([4, 0], dtype=torch.long, device=device), (
+                torch.empty([0], dtype=torch.float32, device=device),
                 None,
                 None,
             ), None, None, None
@@ -697,7 +700,7 @@ class CDR3ConformationPotential(FlatBottomPotential, DihedralPotential):
 
         if dihedral_index.shape[1] == 0:
             return dihedral_index, (
-                torch.empty([0], device=dihedral_index.device),
+                torch.empty([0], dtype=torch.float32, device=device),
                 None,
                 None,
             ), None, None, None

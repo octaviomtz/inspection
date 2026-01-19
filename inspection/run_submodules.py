@@ -17,6 +17,8 @@ def run_submodules_step_by_step(
     batch: dict[str, Tensor],
     recycling_steps: Optional[int] = None,
     num_sampling_steps: Optional[int] = None,
+    diffusion_samples: Optional[int] = None,
+    max_parallel_samples: Optional[int] = None,
     verbose: bool = True,
 ) -> dict[str, Any]:
     """Run model submodules step by step and return intermediate outputs.
@@ -34,6 +36,10 @@ def run_submodules_step_by_step(
         Number of recycling iterations. If None, uses model's predict_args.
     num_sampling_steps : Optional[int]
         Number of diffusion sampling steps. If None, uses model's predict_args.
+    diffusion_samples : Optional[int]
+        Number of diffusion samples (multiplicity). If None, uses model's predict_args.
+    max_parallel_samples : Optional[int]
+        Maximum number of parallel samples. If None, uses model's predict_args.
     verbose : bool
         Print progress messages.
 
@@ -58,6 +64,10 @@ def run_submodules_step_by_step(
         recycling_steps = predict_args.get('recycling_steps', 0)
     if num_sampling_steps is None:
         num_sampling_steps = predict_args.get('sampling_steps', None)
+    if diffusion_samples is None:
+        diffusion_samples = predict_args.get('diffusion_samples', 1)
+    if max_parallel_samples is None:
+        max_parallel_samples = predict_args.get('max_parallel_samples', None)
 
     outputs = {}
     model.eval()
@@ -220,7 +230,7 @@ def run_submodules_step_by_step(
 
             # Structure module (sampling)
             if verbose:
-                print("\n[7/8] Running structure_module.sample...")
+                print(f"\n[7/8] Running structure_module.sample (diffusion_samples={diffusion_samples})...")
             with torch.autocast("cuda", enabled=False):
                 struct_out = model.structure_module.sample(
                     s_trunk=s.float(),
@@ -228,8 +238,8 @@ def run_submodules_step_by_step(
                     feats=batch,
                     num_sampling_steps=num_sampling_steps,
                     atom_mask=batch["atom_pad_mask"].float(),
-                    multiplicity=1,
-                    max_parallel_samples=None,
+                    multiplicity=diffusion_samples,
+                    max_parallel_samples=max_parallel_samples,
                     steering_args=getattr(model, 'steering_args', None),
                     diffusion_conditioning=diffusion_conditioning,
                 )
@@ -261,7 +271,7 @@ def run_submodules_step_by_step(
                 x_pred=x_pred.detach(),
                 feats=batch,
                 pred_distogram_logits=pdistogram[:, :, :, 0].detach(),
-                multiplicity=1,
+                multiplicity=diffusion_samples,
                 run_sequentially=True,
                 use_kernels=getattr(model, 'use_kernels', False),
             )
