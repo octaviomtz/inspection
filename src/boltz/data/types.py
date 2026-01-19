@@ -533,6 +533,11 @@ class InferenceOptions:
     cdr3_constraints: Optional[
         list[tuple[int, int, int, str, bool, Optional[list[float]], Optional[list[float]]]]
     ] = None
+    # Antigen orientation constraints: (antigen_chain_id, contact_threshold, cdr_regions, force)
+    # cdr_regions is a list of (chain_id, start_res, end_res) tuples
+    antigen_orientation_constraints: Optional[
+        list[tuple[int, float, list[tuple[int, int, int]], bool]]
+    ] = None
 
 
 @dataclass(frozen=True)

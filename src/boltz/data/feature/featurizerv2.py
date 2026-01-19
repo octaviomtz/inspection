@@ -2278,6 +2278,82 @@ def process_cdr3_feature_constraints(
     }
 
 
+def process_antigen_orientation_constraints(
+    data: Tokenized,
+    inference_antigen_constraints: list[tuple[int, float, list[tuple[int, int, int]], bool]],
+):
+    """Process antigen orientation constraints.
+
+    Creates feature tensors for antigen-CDR distance steering.
+
+    Parameters
+    ----------
+    data : Tokenized
+        The tokenized input data.
+    inference_antigen_constraints : list
+        List of antigen constraints. Each tuple contains:
+        (antigen_chain_id, contact_threshold, cdr_regions, force)
+        where cdr_regions is a list of (chain_id, start_res, end_res) tuples
+
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - antigen_atom_index: [N_antigen] tensor of antigen CA atom indices
+        - cdr_atom_index: [N_cdr] tensor of CDR CA atom indices
+        - antigen_orientation_threshold: scalar contact threshold
+    """
+    token_data = data.tokens
+
+    antigen_atom_indices = []
+    cdr_atom_indices = []
+    threshold = 8.0  # default
+
+    for antigen_chain_id, contact_threshold, cdr_regions, force in inference_antigen_constraints:
+        if not force:
+            continue
+
+        threshold = contact_threshold
+
+        # Find antigen CA atoms
+        # For proteins, CA is typically at index 1 within each residue (N=0, CA=1, C=2)
+        for token in token_data:
+            if (
+                token["asym_id"] == antigen_chain_id
+                and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+            ):
+                # CA atom index within residue is 1 (N=0, CA=1, C=2, O=3)
+                ca_idx = token["atom_idx"] + 1
+                antigen_atom_indices.append(ca_idx)
+
+        # Find CDR CA atoms
+        for cdr_chain_id, start_res, end_res in cdr_regions:
+            for token in token_data:
+                if (
+                    token["asym_id"] == cdr_chain_id
+                    and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+                    and start_res <= token["res_idx"] <= end_res
+                ):
+                    # CA atom index within residue is 1
+                    ca_idx = token["atom_idx"] + 1
+                    cdr_atom_indices.append(ca_idx)
+
+    if len(antigen_atom_indices) > 0 and len(cdr_atom_indices) > 0:
+        antigen_atom_index = torch.tensor(antigen_atom_indices, dtype=torch.long)
+        cdr_atom_index = torch.tensor(cdr_atom_indices, dtype=torch.long)
+        threshold_tensor = torch.tensor([threshold], dtype=torch.float32)
+    else:
+        antigen_atom_index = torch.empty((0,), dtype=torch.long)
+        cdr_atom_index = torch.empty((0,), dtype=torch.long)
+        threshold_tensor = torch.tensor([8.0], dtype=torch.float32)
+
+    return {
+        "antigen_atom_index": antigen_atom_index,
+        "cdr_atom_index": cdr_atom_index,
+        "antigen_orientation_threshold": threshold_tensor,
+    }
+
+
 class Boltz2Featurizer:
     """Boltz2 featurizer."""
 
@@ -2323,6 +2399,9 @@ class Boltz2Featurizer:
         ] = None,
         inference_cdr3_constraints: Optional[
             list[tuple[int, int, int, str, bool, list[float], list[float]]]
+        ] = None,
+        inference_antigen_orientation_constraints: Optional[
+            list[tuple[int, float, list[tuple[int, int, int]], bool]]
         ] = None,
         compute_affinity: bool = False,
     ) -> dict[str, Tensor]:
@@ -2455,6 +2534,7 @@ class Boltz2Featurizer:
         chain_constraint_features = {}
         contact_constraint_features = {}
         cdr3_constraint_features = {}
+        antigen_orientation_constraint_features = {}
         if compute_constraint_features:
             residue_constraint_features = process_residue_constraint_features(data)
             chain_constraint_features = process_chain_feature_constraints(data)
@@ -2466,6 +2546,10 @@ class Boltz2Featurizer:
             cdr3_constraint_features = process_cdr3_feature_constraints(
                 data=data,
                 inference_cdr3_constraints=inference_cdr3_constraints if inference_cdr3_constraints else [],
+            )
+            antigen_orientation_constraint_features = process_antigen_orientation_constraints(
+                data=data,
+                inference_antigen_constraints=inference_antigen_orientation_constraints if inference_antigen_orientation_constraints else [],
             )
 
         return {
@@ -2480,5 +2564,6 @@ class Boltz2Featurizer:
             **chain_constraint_features,
             **contact_constraint_features,
             **cdr3_constraint_features,
+            **antigen_orientation_constraint_features,
             **ligand_to_mw,
         }

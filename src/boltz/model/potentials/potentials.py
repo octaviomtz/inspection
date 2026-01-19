@@ -720,6 +720,85 @@ class CDR3ConformationPotential(FlatBottomPotential, DihedralPotential):
         return dihedral_index, (k, lower_bounds, upper_bounds), None, None, None
 
 
+class AntigenOrientationPotential(FlatBottomPotential, DistancePotential):
+    """Potential to optimize antigen orientation relative to CDR loops.
+
+    This potential encourages the antigen to orient such that its residues
+    are in contact with CDR loops from heavy and light chains. It works by:
+    1. Computing distances between antigen CA atoms and CDR CA atoms
+    2. Applying a flat-bottom energy penalty for distances > contact_threshold
+    3. Providing gradients that push antigen atoms toward nearest CDR atoms
+
+    Features expected in feats:
+    - antigen_atom_index: [N_antigen] tensor of antigen CA atom indices
+    - cdr_atom_index: [N_cdr] tensor of CDR CA atom indices
+    - antigen_orientation_threshold: scalar contact threshold (Angstrom)
+    """
+
+    def compute_args(self, feats, parameters):
+        """Extract antigen and CDR atom indices and compute pair indices.
+
+        Returns pair indices for all antigen-CDR atom pairs along with
+        distance thresholds for the flat-bottom potential.
+        """
+        device = feats["atom_pad_mask"].device
+
+        # Check if antigen orientation features are present
+        if "antigen_atom_index" not in feats:
+            return torch.empty([2, 0], dtype=torch.long, device=device), (
+                torch.empty([0], dtype=torch.float32, device=device),
+                None,
+                None,
+            ), None, None, None
+
+        antigen_atom_index = feats["antigen_atom_index"][0]  # [N_antigen]
+        cdr_atom_index = feats["cdr_atom_index"][0]  # [N_cdr]
+
+        if antigen_atom_index.shape[0] == 0 or cdr_atom_index.shape[0] == 0:
+            return torch.empty([2, 0], dtype=torch.long, device=device), (
+                torch.empty([0], dtype=torch.float32, device=device),
+                None,
+                None,
+            ), None, None, None
+
+        # Get contact threshold
+        threshold = feats["antigen_orientation_threshold"][0].item()
+
+        # Create pair indices: for each antigen atom, find distance to nearest CDR atom
+        # We create all antigen-CDR pairs and use union_index to group by antigen atom
+        n_antigen = antigen_atom_index.shape[0]
+        n_cdr = cdr_atom_index.shape[0]
+
+        # Create all pairs: antigen_atom_i <-> cdr_atom_j
+        antigen_expanded = antigen_atom_index.unsqueeze(1).expand(-1, n_cdr).flatten()
+        cdr_expanded = cdr_atom_index.unsqueeze(0).expand(n_antigen, -1).flatten()
+
+        pair_index = torch.stack([antigen_expanded, cdr_expanded], dim=0)  # [2, N_antigen * N_cdr]
+
+        # Union index groups pairs by antigen atom for soft-min computation
+        union_index = torch.arange(n_antigen, device=device).unsqueeze(1).expand(-1, n_cdr).flatten()
+
+        # Upper bounds = contact_threshold for all pairs
+        upper_bounds = torch.full(
+            (pair_index.shape[1],), threshold, dtype=torch.float32, device=device
+        )
+        lower_bounds = None
+
+        # Spring constant
+        k = torch.ones_like(upper_bounds)
+
+        # No negation (we want distance < threshold)
+        negation_mask = torch.zeros(pair_index.shape[1], dtype=torch.bool, device=device)
+
+        return (
+            pair_index,
+            (k, lower_bounds, upper_bounds),
+            None,
+            None,
+            (negation_mask, union_index),
+        )
+
+
 def get_potentials(steering_args, boltz2=False):
     potentials = []
     if steering_args["fk_steering"] or steering_args["physical_guidance_update"]:
@@ -852,6 +931,26 @@ def get_potentials(steering_args, boltz2=False):
                     ),
                     "resampling_weight": 1.0,
                     "buffer": 0.35,  # ~20 degrees flexibility
+                }
+            )
+        )
+    # Add antigen orientation potential if enabled
+    if boltz2 and steering_args.get("antigen_steering", False):
+        potentials.append(
+            AntigenOrientationPotential(
+                parameters={
+                    "guidance_interval": 2,
+                    "guidance_weight": PiecewiseStepFunction(
+                        thresholds=[0.3, 0.7],
+                        values=[1.5, 1.0, 0.3]  # Strong early, weaker late
+                    ),
+                    "resampling_weight": PiecewiseStepFunction(
+                        thresholds=[0.5],
+                        values=[1.0, 0.5]  # Heavy resampling early
+                    ),
+                    "union_lambda": ExponentialInterpolation(
+                        start=8.0, end=0.0, alpha=-2.0
+                    ),
                 }
             )
         )

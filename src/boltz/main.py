@@ -173,6 +173,7 @@ class BoltzSteeringParams:
     physical_guidance_update: bool = False
     contact_guidance_update: bool = True
     cdr3_steering: bool = False
+    antigen_steering: bool = False
     num_gd_steps: int = 20
 
 
@@ -996,6 +997,12 @@ def cli() -> None:
          "Requires --use_potentials. Define CDR3 regions using cdr3_conformation constraints in YAML.",
 )
 @click.option(
+    "--antigen_steering",
+    is_flag=True,
+    help="Enable antigen orientation steering to maximize CDR-antigen contact. "
+         "Requires --use_potentials. Define using antigen_orientation constraints in YAML.",
+)
+@click.option(
     "--model",
     default="boltz2",
     type=click.Choice(["boltz1", "boltz2"]),
@@ -1099,6 +1106,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     api_key_value: Optional[str] = None,
     use_potentials: bool = False,
     cdr3_steering: bool = False,
+    antigen_steering: bool = False,
     model: Literal["boltz1", "boltz2"] = "boltz2",
     method: Optional[str] = None,
     affinity_mw_correction: Optional[bool] = False,
@@ -1342,10 +1350,16 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         steering_args.fk_steering = use_potentials
         steering_args.physical_guidance_update = use_potentials
         steering_args.cdr3_steering = cdr3_steering
+        steering_args.antigen_steering = antigen_steering
 
         # Validate CDR3 steering requires potentials
         if cdr3_steering and not use_potentials:
             msg = "CDR3 steering (--cdr3_steering) requires potentials to be enabled (--use_potentials)"
+            raise click.UsageError(msg)
+
+        # Validate antigen steering requires potentials
+        if antigen_steering and not use_potentials:
+            msg = "Antigen steering (--antigen_steering) requires potentials to be enabled (--use_potentials)"
             raise click.UsageError(msg)
 
         model_cls = Boltz2 if model == "boltz2" else Boltz1

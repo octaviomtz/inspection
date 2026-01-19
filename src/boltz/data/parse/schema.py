@@ -1513,6 +1513,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
     pocket_constraints = []
     contact_constraints = []
     cdr3_constraints = []
+    antigen_orientation_constraints = []
     constraints = schema.get("constraints", [])
     for constraint in constraints:
         if "bond" in constraint:
@@ -1628,6 +1629,43 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
                 raise ValueError(msg)
 
             cdr3_constraints.append((chain_id, start_res, end_res, conformation, force, lower_bounds, upper_bounds))
+        elif "antigen_orientation" in constraint:
+            if not boltz_2:
+                msg = "Antigen orientation constraint is not supported in Boltz-1!"
+                raise ValueError(msg)
+
+            antigen_data = constraint["antigen_orientation"]
+            if "antigen_chain" not in antigen_data or "cdr3_regions" not in antigen_data:
+                msg = "Antigen orientation constraint requires antigen_chain and cdr3_regions"
+                raise ValueError(msg)
+
+            antigen_chain_name = antigen_data["antigen_chain"]
+            if antigen_chain_name not in chain_to_idx:
+                msg = f"Antigen chain {antigen_chain_name} not found in input!"
+                raise ValueError(msg)
+
+            antigen_chain_id = chain_to_idx[antigen_chain_name]
+            contact_threshold = antigen_data.get("contact_threshold", 8.0)
+
+            # Parse CDR3 regions
+            cdr_regions = []
+            for cdr_region in antigen_data["cdr3_regions"]:
+                if "chain" not in cdr_region or "start_res" not in cdr_region or "end_res" not in cdr_region:
+                    msg = "Each cdr3_region requires chain, start_res, and end_res"
+                    raise ValueError(msg)
+
+                cdr_chain_name = cdr_region["chain"]
+                if cdr_chain_name not in chain_to_idx:
+                    msg = f"CDR chain {cdr_chain_name} not found in input!"
+                    raise ValueError(msg)
+
+                cdr_chain_id = chain_to_idx[cdr_chain_name]
+                cdr_start = cdr_region["start_res"] - 1  # Convert to 0-indexed
+                cdr_end = cdr_region["end_res"] - 1  # Convert to 0-indexed
+                cdr_regions.append((cdr_chain_id, cdr_start, cdr_end))
+
+            force = antigen_data.get("force", True)
+            antigen_orientation_constraints.append((antigen_chain_id, contact_threshold, cdr_regions, force))
         else:
             msg = f"Invalid constraint: {constraint}"
             raise ValueError(msg)
@@ -1843,6 +1881,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
         pocket_constraints=pocket_constraints,
         contact_constraints=contact_constraints,
         cdr3_constraints=cdr3_constraints if cdr3_constraints else None,
+        antigen_orientation_constraints=antigen_orientation_constraints if antigen_orientation_constraints else None,
     )
     record = Record(
         id=name,

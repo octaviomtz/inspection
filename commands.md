@@ -15,3 +15,6 @@ boltz predict examples/contact_constrained/7Y0O_HLA_steer_cdr3.yaml --output_for
 
 # steering_cdr3 trainer
 boltz predict examples/contact_constrained/7Y0O_HLA_steer_cdr3.yaml --output_format pdb --use_potentials --cdr3_steering --diffusion_samples 5
+
+# antigen_steering
+boltz predict examples/contact_constrained/7Y0O_HLA_antigen_steer.yaml --output_format pdb --diffusion_samples 5 --use_potentials  --antigen_steering
