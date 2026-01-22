@@ -1,7 +1,17 @@
+import warnings
+
 import torch
 from torch import Tensor, nn
 
 from boltz.model.layers import initialize as init
+
+# Check if cuequivariance_torch is available
+try:
+    from cuequivariance_torch.primitives.triangle import triangle_multiplicative_update
+    CUEQUIVARIANCE_AVAILABLE = True
+except ImportError:
+    CUEQUIVARIANCE_AVAILABLE = False
+    triangle_multiplicative_update = None
 
 
 @torch.compiler.disable
@@ -19,7 +29,12 @@ def kernel_triangular_mult(
     g_out_weight,
     eps,
 ):
-    from cuequivariance_torch.primitives.triangle import triangle_multiplicative_update
+    if not CUEQUIVARIANCE_AVAILABLE:
+        raise ImportError(
+            "cuequivariance_torch is required for kernel acceleration. "
+            "Install it with: pip install cuequivariance_torch "
+            "Or use --no_kernels flag to disable kernel acceleration."
+        )
     return triangle_multiplicative_update(
         x,
         direction=direction,

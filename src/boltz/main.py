@@ -1003,6 +1003,13 @@ def cli() -> None:
          "Requires --use_potentials. Define using antigen_orientation constraints in YAML.",
 )
 @click.option(
+    "--num_particles",
+    type=int,
+    default=3,
+    help="Number of particles for Feynman-Kac steering. Lower values reduce memory usage. "
+         "With steering enabled, total samples = diffusion_samples × num_particles. Default is 3.",
+)
+@click.option(
     "--model",
     default="boltz2",
     type=click.Choice(["boltz1", "boltz2"]),
@@ -1107,6 +1114,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     use_potentials: bool = False,
     cdr3_steering: bool = False,
     antigen_steering: bool = False,
+    num_particles: int = 3,
     model: Literal["boltz1", "boltz2"] = "boltz2",
     method: Optional[str] = None,
     affinity_mw_correction: Optional[bool] = False,
@@ -1351,6 +1359,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         steering_args.physical_guidance_update = use_potentials
         steering_args.cdr3_steering = cdr3_steering
         steering_args.antigen_steering = antigen_steering
+        steering_args.num_particles = num_particles
 
         # Validate CDR3 steering requires potentials
         if cdr3_steering and not use_potentials:

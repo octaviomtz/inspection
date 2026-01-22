@@ -26,6 +26,14 @@ from boltz.model.layers.triangular_attention.utils import (
     permute_final_dims,
 )
 
+# Check if cuequivariance_torch is available
+try:
+    from cuequivariance_torch.primitives.triangle import triangle_attention
+    CUEQUIVARIANCE_AVAILABLE = True
+except ImportError:
+    CUEQUIVARIANCE_AVAILABLE = False
+    triangle_attention = None
+
 
 class Linear(nn.Linear):
     """
@@ -198,7 +206,12 @@ def _attention(
 
 @torch.compiler.disable
 def kernel_triangular_attn(q, k, v, tri_bias, mask, scale):
-    from cuequivariance_torch.primitives.triangle import triangle_attention
+    if not CUEQUIVARIANCE_AVAILABLE:
+        raise ImportError(
+            "cuequivariance_torch is required for kernel acceleration. "
+            "Install it with: pip install cuequivariance_torch "
+            "Or use --no_kernels flag to disable kernel acceleration."
+        )
     return triangle_attention(q, k, v, tri_bias, mask=mask, scale=scale)
 
 

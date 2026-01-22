@@ -1,4 +1,5 @@
 import gc
+import warnings
 from typing import Any, Optional
 
 import numpy as np
@@ -9,6 +10,13 @@ from torch import Tensor, nn
 from torchmetrics import MeanMetric
 
 import boltz.model.layers.initialize as init
+
+# Check if cuequivariance_torch is available for kernel acceleration
+try:
+    import cuequivariance_torch  # noqa: F401
+    CUEQUIVARIANCE_AVAILABLE = True
+except ImportError:
+    CUEQUIVARIANCE_AVAILABLE = False
 from boltz.data import const
 from boltz.data.mol import (
     minimum_lddt_symmetry_coords,
@@ -363,6 +371,17 @@ class Boltz2(LightningModule):
             torch.cuda.is_available()
             and torch.cuda.get_device_properties(torch.device("cuda")).major >= 8.0  # noqa: PLR2004
         ):
+            self.use_kernels = False
+
+        # Check for cuequivariance_torch availability when kernels are requested
+        if stage == "predict" and self.use_kernels and not CUEQUIVARIANCE_AVAILABLE:
+            warnings.warn(
+                "cuequivariance_torch is not installed. Kernel acceleration will be disabled. "
+                "To enable GPU kernel acceleration, install it with: pip install cuequivariance_torch "
+                "Or explicitly use --no_kernels flag to suppress this warning.",
+                UserWarning,
+                stacklevel=2,
+            )
             self.use_kernels = False
 
         if (
