@@ -134,3 +134,30 @@ This framework supports adding more steering methods in the future:
 - Domain orientation steering (control multi-domain arrangements)
 - Loop conformation steering (beyond CDR3)
 - Custom energy function steering (user-defined constraints)
+
+---
+
+## Steering Proposals
+
+New steering strategies are under development to improve antibody-antigen binding prediction, particularly for cases with unknown epitope locations. These strategies aim to:
+
+- Explore different CDR conformations (especially CDR-H3 and CDR-L3)
+- Simultaneously optimize antigen orientation without knowing the epitope location
+- Discover which regions of the antigen are preferred for binding
+
+**[→ See detailed steering proposals and novel strategies](./notes_steering/steering_proposals.md)**
+
+### Summary of Proposed Strategies
+
+- **Strategy A-C**: Existing approaches (reference)
+- **Strategy D (Canonical Ensemble)**: Sample from known CDR canonical structures
+- **Strategy E (Blind Scanning)**: Systematically scan antigen surface to find epitope
+- **Strategy F (Ensemble Modes)**: Generate multiple binding conformations with different CDR geometries
+- **Strategy G (Multi-Phase)**: Progressive refinement from exploration to exploitation
+- **Strategy H (Entropy-Maximizing)**: Generate diverse conformations with equal binding quality
+- **Strategy I (Epitope Scoring)**: Integrate modern ML epitope predictions
+- **Strategy J (Coupled CDR3)**: Joint sampling of heavy and light chain CDR3
+
+Each strategy includes implementation complexity analysis, expected benefits, and computational cost estimates.
+
+**Status**: Design Phase - These are proposals for future implementation.

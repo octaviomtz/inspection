@@ -181,4 +181,5 @@ boltz predict ab_ag_complex.yaml \
 
 - [[../STEERING_METHODS|Back to Steering Methods Overview]]
 - [[Antigen Steering|antigen_steering]] for simultaneous antigen orientation control
+- [[Steering Proposals|steering_proposals]] - Future strategies including Strategy D (Canonical Ensemble) for enhanced CDR3 conformation exploration
 - `--use_potentials` documentation for general potential-guided inference

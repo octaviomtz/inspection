@@ -270,5 +270,6 @@ Enforce specific CDR3 backbone angles while simultaneously optimizing antigen or
 
 - [[../STEERING_METHODS|Back to Steering Methods Overview]]
 - [[CDR3 Steering|cdr3_steering]] for CDR3 backbone control
+- [[Steering Proposals|steering_proposals]] - Advanced strategies including Strategy E (Blind Epitope Scanning), Strategy G (Multi-Phase), and Strategy J (Coupled CDR3 Sampling)
 - `--use_potentials` documentation for general potential-guided inference
 - [Boltz-2 Inference Pipeline](../boltz2_inference_pipeline.md)
