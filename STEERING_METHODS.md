@@ -160,4 +160,20 @@ New steering strategies are under development to improve antibody-antigen bindin
 
 Each strategy includes implementation complexity analysis, expected benefits, and computational cost estimates.
 
+### Latent Space Scaling-Inspired Ideas
+
+Inspired by recent work on pair representation scaling (Suzuki & Amagasa, 2026), we are exploring novel steering methods that modulate the latent space directly during inference:
+
+**[→ See latent space scaling-inspired steering ideas](./notes_steering/latent_space_scaling_inspired_ideas.md)**
+
+These approaches include:
+- **Idea K**: Region-Specific β-Scaling for Epitope Discovery
+- **Idea L**: CDR3-Specific β-Scaling for Conformation Exploration
+- **Idea M**: Inter-Chain β-Scaling for Interface Optimization
+- **Idea N**: Adaptive β-Scheduling During Diffusion
+- **Idea O**: Differential β-Scaling Between Heavy and Light Chain CDRs
+- **Idea P**: Contact-Guided β-Scaling Feedback Loop
+
+All latent space scaling ideas share key advantages: **computational efficiency**, **no retraining required**, **transparent mechanism**, and **MSA-agnostic** (work with or without evolutionary information).
+
 **Status**: Design Phase - These are proposals for future implementation.
