@@ -177,3 +177,49 @@ These approaches include:
 All latent space scaling ideas share key advantages: **computational efficiency**, **no retraining required**, **transparent mechanism**, and **MSA-agnostic** (work with or without evolutionary information).
 
 **Status**: Design Phase - These are proposals for future implementation.
+
+---
+
+## Improvements to Steering Proposals and Novel Ideas
+
+Based on analysis of the FK-Diffusion Steering framework (Horvitz et al., 2501.06848) and Boltz-sample β-scaling (Suzuki & Amagasa, 2026), we have identified significant improvements to the existing strategies (A-J) and enhancements to the β-scaling ideas (K-P), plus several entirely novel hybrid approaches.
+
+### Quick Start
+**New Analysis (Feb 2025)**: Based on FK-Diffusion Steering and Boltz-sample papers, we've identified 22 significant improvements and 5 novel ideas. Start here:
+
+1. **[→ Analysis Summary](./notes_steering/ANALYSIS_SUMMARY.md)** - Overview of what was analyzed and key findings
+2. **[→ Quick Reference](./notes_steering/improvements_quick_reference.md)** - At-a-glance summary, implementation roadmap, decision guide
+3. **[→ Full Technical Details](./notes_steering/improvements_and_new_ideas.md)** - Comprehensive analysis with implementation notes for each improvement
+4. **[→ Implementation Guide](./notes_steering/implementation_guide.md)** - Concrete code changes needed for each improvement (without making changes yet)
+
+### Summary of Improvements to Existing Strategies
+
+- **Strategy D+ (Enhanced Canonical Ensemble)**: Use β-scaling instead of explicit potentials for better efficiency
+- **Strategy E+ (Enhanced Blind Scanning)**: Use region-specific β-scaling (Idea K) for 10-20x speedup
+- **Strategy G+ (Enhanced Progressive Refinement)**: Implement contact-triggered phase transitions and smooth β-scheduling
+- **Strategy J+ (Enhanced Coupled CDR3)**: Replace 2D grid with asymmetric β-scaling and beam search
+
+### Summary of Enhancements to β-Scaling Ideas
+
+- **Idea K+ (Region-Specific β-Scaling v2)**: Adaptive region definition using surface properties and confidence weighting
+- **Idea L+ (CDR3-Specific β-Scaling v2)**: Two-stage approach combining CDR3 exploration with contact optimization
+- **Idea M+ (Interface β-Scaling v2)**: Integration with predicted binding affinity and physics-informed β scheduling
+- **Idea N+ (Adaptive β-Scheduling v2)**: Contact-aware dynamic phase transitions with plateau detection
+- **Idea O+ (Asymmetric β-Scaling v2)**: Task-specific β values with experimental validation targets
+- **Idea P+ (Contact-Guided β-Feedback v2)**: Multi-pass refinement with convergence criteria
+
+### Summary of Novel Hybrid Approaches
+
+- **Idea Q (Iterative Epitope Refinement)**: Three-round FK + β-scaling combination for rapid epitope discovery and refinement
+- **Idea R (Multi-Objective Steering)**: Simultaneous optimization of contact, conformation, and clash avoidance
+- **Idea S (Template-Guided β-Scheduling)**: Incorporate known antibody-antigen structure knowledge via soft β-biasing
+- **Idea T (MSA-Free Steering)**: Strategies for synthetic/designed antibodies with limited evolutionary information
+- **Idea U (Conformational Energy Landscape Mapping)**: Map entire accessible structure space via β-sweep for complete characterization
+
+### Implementation Priority
+
+**Phase 1 (Immediate)**: L+, K+, G+, N+ - highest impact, moderate complexity
+**Phase 2 (Near-term)**: Q, T, O+ - novel contributions, good scientific value
+**Phase 3 (Medium-term)**: R, S, U - advanced approaches, publication-worthy
+
+All improvements are designed to leverage the efficiency and transparency of β-scaling mechanisms and the flexibility of FK-Diffusion resampling frameworks.
