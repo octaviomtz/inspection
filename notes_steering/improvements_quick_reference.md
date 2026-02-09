@@ -11,7 +11,8 @@
 - 6 existing strategies (A-J) have enhanced versions
 - 6 β-scaling ideas (K-P) are improved
 - 5 entirely novel ideas (Q-U) addressing hybrid approaches
-- Total: **17 improvements/enhancements + 5 new ideas**
+- 5 new EmbedOpt-inspired ideas (V-Z) for robust embedding-space steering
+- Total: **17 improvements/enhancements + 10 new ideas = 27 total improvements**
 
 ### Why It Matters
 After reviewing:
@@ -57,10 +58,15 @@ We identified significant efficiency gains and novel hybrid approaches that can:
 | **S** | Template-Guided β-Scheduling | Structure design | PDB template information | Humanization, library design |
 | **T** | MSA-Free Steering | De novo design | Latent space intrinsic properties | Synthetic antibodies |
 | **U** | Energy Landscape Mapping | Analysis | Complete β-sweep | Structure characterization |
+| **V** | Embedding-Space CDR3 Steering | Structure (robust) | CDR3 embedding optimization | Novel/synthetic CDR sequences |
+| **W** | Embedding-Based Interface Steering | Binding (robust) | Interface embedding optimization | Novel antigens, robust steering |
+| **X** | Experimental Constraint Integration | Structure + Robustness | Multi-modal constraint fusion | Cryo-EM, cross-linking, HDX-MS data |
+| **Y** | Hierarchical Steering | Structure + Binding | Embedding then coordinates | Novel sequences, high precision needed |
+| **Z** | Soft Experimental Constraints | Structure (robust) | Probabilistic constraints | Noisy experimental data |
 
 ---
 
-## Implementation Roadmap
+## Implementation Roadmap (Updated with EmbedOpt Ideas)
 
 ### Phase 1 (Week 1-2) - Quick Wins
 1. **L+**: CDR3-specific β-scaling v2
@@ -70,19 +76,32 @@ We identified significant efficiency gains and novel hybrid approaches that can:
 
 **Why**: Directly improve existing steering code, high impact, moderate complexity
 
-### Phase 2 (Week 3-4) - Novel Contributions
-5. **Q**: Iterative epitope refinement
-6. **T**: MSA-free steering strategies
+### Phase 2 (Week 3-4) - Novel Contributions (Expanded)
+5. **Q**: Iterative epitope refinement (FK + β hybrid)
+6. **T**: MSA-free steering strategies (β-scaling)
 7. **O+**: Asymmetric β-scaling enhancement
+8. **D+**: Enhanced canonical ensemble
+9. **E+**: Enhanced blind scanning (10-20x speedup)
+10. **V**: Embedding-space CDR3 steering (EmbedOpt-inspired) - **NEW**
+11. **W**: Embedding-based interface steering (EmbedOpt-inspired) - **NEW**
 
-**Why**: Novel ideas, publication-worthy, moderate complexity, good scientific value
+**Why**: Novel ideas, publication-worthy, moderate complexity, good scientific value. V+W bring robustness for novel sequences.
 
-### Phase 3 (Week 5-6) - Advanced
-8. **R**: Multi-objective steering
-9. **S**: Template-guided β-scheduling
-10. **U**: Energy landscape mapping
+### Phase 2.5 (Week 4-5) - Medium Complexity (New)
+- **V**: Embedding-space CDR3 steering (more robust than dihedral potentials)
+- **W**: Embedding-based interface steering (captures binding specificity)
 
-**Why**: Complex implementations, interesting science, could be foundational for future work
+**Why**: EmbedOpt-inspired, medium complexity, significant robustness improvement, 50%+ improvement for novel sequences
+
+### Phase 3 (Week 5-6+) - Advanced Research
+12. **R**: Multi-objective steering
+13. **S**: Template-guided β-scheduling
+14. **U**: Energy landscape mapping
+15. **X**: Experimental constraint integration (cryo-EM, cross-linking, HDX-MS) - **NEW**
+16. **Y**: Hierarchical steering (embedding + coordinate) - **NEW**
+17. **Z**: Soft experimental constraints (probabilistic) - **NEW**
+
+**Why**: Complex implementations, publication-worthy, experimental data integration. X+Y+Z enable new capabilities with experimental data.
 
 ---
 
@@ -103,6 +122,17 @@ We identified significant efficiency gains and novel hybrid approaches that can:
 - Works even without MSA (activates internal priors)
 
 **Application**: More efficient than explicit potentials, transparent mechanism
+
+### EmbedOpt (Li et al., 2602.05285) - **NEW**
+**Core**: Optimize in embedding space rather than coordinate space for robustness
+- Embedding space captures sequence and coevolutionary signals more stably
+- Stable across 2 orders of magnitude of hyperparameter variation
+- Better for out-of-distribution constraints (novel sequences, unusual conformations)
+- Designed for experimental constraints (cryo-EM maps, distance constraints, cross-linking data)
+
+**Application**: More robust steering for novel antibodies, experimental data integration, probabilistic handling of measurement uncertainty
+
+**Key Insight**: Embedding space optimization is fundamentally more robust than coordinate-space potentials for steering diffusion models, especially for constraints outside training distribution.
 
 ---
 

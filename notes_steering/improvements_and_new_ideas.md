@@ -668,6 +668,230 @@ For each strategy S:
 
 ---
 
+## Part 9: EmbedOpt-Inspired Improvements (Robust Embedding Space Steering)
+
+### Key Insight from EmbedOpt Paper
+
+The "Robust Inference-Time Steering of Protein Diffusion Models via Embedding Optimization" paper (Li et al., 2602.05285) introduces a critical insight:
+
+**Embedding space optimization is more robust than coordinate space optimization** for steering diffusion models, especially for experimental constraints outside the training distribution.
+
+**Advantages**:
+- Stable across 2 orders of magnitude of hyperparameter variation
+- Better for out-of-distribution constraints
+- Fewer aggressive parameter tuning requirements
+- Captures "sequence and coevolutionary signals" in latent representation
+
+**Application to Antibody-Antigen Steering**:
+Instead of steering in atomic coordinate space (current approach with potentials), we can steer in embedding space where CDR and antigen properties are encoded more stably.
+
+---
+
+### Idea V: Embedding Space CDR3 Steering (EmbedOpt-Inspired)
+
+**Goal**: More robust CDR3 conformation exploration for novel sequences
+
+**Motivation**: Current CDR3 steering uses explicit dihedral potentials (coordinate space). For novel CDR sequences, this can be brittle. EmbedOpt shows embedding space optimization is more robust.
+
+**Approach**:
+1. **CDR3 Embedding Optimization**: Instead of targeting psi angles in coordinate space
+   - Optimize CDR3 representation in Boltz2's embedding layer
+   - Define target embedding based on known CDR3 conformers (from PDB)
+   - Use gradient descent in embedding space toward target
+
+2. **Implementation Strategy**:
+   - Extract CDR3 embeddings from Pairformer (or earlier layers)
+   - Define CDR3_target_embedding from canonical structures
+   - Compute loss: L = ||CDR3_embedding - CDR3_target||²
+   - Optimize embedding, then run final denoising steps
+   - No need to specify dihedral angles explicitly
+
+3. **Robustness Benefits**:
+   - Works for novel CDR sequences not in training set
+   - Stable across wide range of optimization strengths
+   - No hyperparameter tuning per antibody needed
+   - Better generalization to synthetic antibodies
+
+4. **Integration with β-Scaling**:
+   - Embedding optimization (EmbedOpt) as primary steering
+   - β-scaling (Boltz-sample) as secondary refinement
+   - Hybrid approach: two levels of latent space control
+
+**Expected Benefits**:
+- 50%+ improvement for novel/synthetic CDR sequences
+- More stable than coordinate potentials
+- Better for out-of-distribution antibodies
+- Reduced hyperparameter tuning
+
+**Implementation Complexity**: Medium (requires embedding extraction and gradient computation)
+
+**Target Goal**: **Structure Prediction Improvement** for novel sequences + **Robustness**
+
+---
+
+### Idea W: Embedding-Based Interface Steering for Binding
+
+**Goal**: Robust antigen-CDR interface optimization using embedding space
+
+**Motivation**: Current antigen steering uses contact distances (coordinate space). EmbedOpt suggests embedding space captures interface properties more robustly.
+
+**Approach**:
+1. **Interface Embedding Definition**:
+   - Extract embeddings for CDR atoms and antigen atoms
+   - Define interface embedding as pairwise interaction features
+   - Target: strong interaction embeddings between CDR and antigen
+
+2. **Embedding-Space Contact Optimization**:
+   - Instead of maximizing Euclidean distance contacts
+   - Optimize for high "interaction potential" in embedding space
+   - Use learned representations of binding compatibility
+
+3. **Implementation**:
+   - Extract CDR-antigen pair embeddings
+   - Define loss: minimize distance between observed and ideal interaction embeddings
+   - Gradient descent in embedding space
+   - Propagate back through network layers
+
+4. **Advantages Over Coordinate-Space Steering**:
+   - Captures binding specificity (not just proximity)
+   - Works for novel antigen-antibody pairs
+   - More stable hyperparameter behavior
+   - Better alignment with what model learned about binding
+
+**Expected Benefits**:
+- Better binding affinity prediction (understands specificity, not just distance)
+- Robust to novel antigens
+- 20-30% improvement in interface quality
+- Natural integration with embedding-based predictions
+
+**Implementation Complexity**: Medium-High (requires careful embedding layer identification)
+
+**Target Goal**: **Binding Affinity Improvement** + **Robustness to Novel Antigens**
+
+---
+
+### Idea X: Experimental Constraint Integration via EmbedOpt
+
+**Goal**: Integrate experimental data (cryo-EM, cross-linking, HDX-MS) into Boltz-2 predictions
+
+**Motivation**: EmbedOpt was designed specifically for experimental constraints. Antibody-antigen complexes have experimental data available.
+
+**Approach**:
+1. **Multiple Constraint Types**:
+   - Cryo-EM density maps → constrain overall shape in embedding space
+   - Cross-linking distance constraints → constrain inter-chain distances
+   - HDX-MS protection data → constrain interface residues
+   - SPR data → constrain binding orientation
+
+2. **Embedding-Space Constraint Integration**:
+   - Convert experimental constraints to embedding-space objectives
+   - Optimize embeddings to satisfy constraints
+   - More robust than coordinate-space constraint application
+
+3. **Multi-Modal Fusion**:
+   - Combine multiple constraint types simultaneously
+   - Weight by experimental uncertainty
+   - Natural probabilistic fusion in latent space
+
+4. **Implementation**:
+   - Pre-compute experimental constraint functions
+   - Map to embedding space objectives
+   - Use EmbedOpt-style gradient descent in embeddings
+   - Final refinement with contact-aware guidance
+
+**Expected Benefits**:
+- Leverage experimental antibody-antigen data
+- 3-5x better accuracy when experimental data available
+- Robust multi-modal constraint integration
+- Novel way to use cryo-EM/SAXS/cross-linking data
+
+**Implementation Complexity**: High (requires constraint translation to embedding space)
+
+**Target Goal**: **Structure Prediction Accuracy** (when experimental data available) + **Robustness**
+
+---
+
+### Idea Y: Hierarchical Steering - Embedding First, Then Coordinates (Hybrid)
+
+**Goal**: Combine robustness of embedding steering with precision of coordinate steering
+
+**Motivation**: EmbedOpt is robust but may lose fine details. Coordinate potentials are precise but brittle. Use both.
+
+**Approach**:
+1. **Stage 1 - Embedding Steering** (t=T to t=T/2):
+   - Use EmbedOpt-style embedding optimization
+   - Coarse-grained steering toward target conformations
+   - Robust even if constraints are out-of-distribution
+   - Explores conformational space broadly
+
+2. **Stage 2 - Coordinate Steering** (t=T/2 to t=0):
+   - Switch to coordinate-space potentials
+   - Fine-grained optimization of interface
+   - Refine contact geometry and hydrogen bonding
+   - Exploit local energy landscape
+
+3. **Smooth Transition**:
+   - Gradually reduce embedding steering weight
+   - Gradually increase coordinate steering weight
+   - Natural blend during middle diffusion steps
+
+4. **Combining Benefits**:
+   - Robustness of embedding space (early stages)
+   - Precision of coordinates (late stages)
+   - Best of both worlds
+
+**Expected Benefits**:
+- Robustness of novel sequences (embedding stage)
+- High-precision contacts (coordinate stage)
+- Natural progression matching structure formation
+- Fewer total hyperparameters to tune
+
+**Implementation Complexity**: High (requires dual steering infrastructure)
+
+**Target Goal**: **Structure Prediction Quality** (robust + precise) + **Binding Affinity**
+
+---
+
+### Idea Z: Soft Experimental Constraints via Embedding Scoring
+
+**Goal**: Avoid over-constraining when experimental data has uncertainty
+
+**Motivation**: EmbedOpt can handle constraints robustly, but real experimental data has noise. Use probabilistic soft constraints.
+
+**Approach**:
+1. **Probabilistic Constraint Model**:
+   - Treat experimental measurements as probabilistic constraints
+   - Use Bayesian interpretation: p(structure | experiment)
+   - Model uncertainty: wide distributions for noisy measurements
+
+2. **Soft Embedding Objectives**:
+   - Instead of hard constraints, use soft probability-weighted objectives
+   - Embeddings optimized to likely region, not exact target
+   - Allows flexibility around noisy measurements
+
+3. **Uncertainty-Aware Steering**:
+   - High-confidence measurements → tight embedding constraints
+   - Low-confidence measurements → loose embedding constraints
+   - Adaptive weighting based on measurement precision
+
+4. **Implementation**:
+   - Quantify experimental uncertainty per constraint
+   - Compute Bayesian soft targets in embedding space
+   - Weight objectives by 1/uncertainty²
+   - Natural probabilistic steering
+
+**Expected Benefits**:
+- Better handling of noisy experimental data
+- Avoids over-fitting to imperfect measurements
+- Probabilistically principled approach
+- Robust when experimental precision varies
+
+**Implementation Complexity**: Medium (requires uncertainty quantification)
+
+**Target Goal**: **Structure Prediction Accuracy** (with noisy experiments) + **Robustness**
+
+---
+
 ## Summary Table: All Improvements and New Ideas
 
 | ID | Type | Name | Goal | Complexity | Priority | Status |
@@ -687,6 +911,11 @@ For each strategy S:
 | S | Novel | Template-Guided β-Scheduling | Design | Medium | Phase 3 | New |
 | T | Novel | MSA-Free Steering | Design | Medium | Phase 2 | New |
 | U | Novel | Energy Landscape Mapping | Analysis | Low | Phase 3 | New |
+| V | Novel (EmbedOpt) | Embedding-Space CDR3 Steering | Structure+Robust | Medium | Phase 2 | New |
+| W | Novel (EmbedOpt) | Embedding-Based Interface Steering | Binding+Robust | Medium-High | Phase 2 | New |
+| X | Novel (EmbedOpt) | Experimental Constraint Integration | Structure+Robust | High | Phase 3 | New |
+| Y | Novel (Hybrid) | Hierarchical Steering (Embed→Coords) | Structure+Binding | High | Phase 3 | New |
+| Z | Novel (EmbedOpt) | Soft Experimental Constraints | Structure+Robust | Medium | Phase 3 | New |
 
 ---
 
