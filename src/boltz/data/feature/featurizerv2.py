@@ -2354,6 +2354,55 @@ def process_antigen_orientation_constraints(
     }
 
 
+def process_cdr3_beta_constraints(
+    data: Tokenized,
+    inference_cdr3_beta_constraints: list[tuple[float, list[tuple[int, int, int]]]],
+):
+    """Process CDR3 beta scaling constraints.
+
+    Creates feature tensors for CDR3-specific pair representation scaling.
+
+    Parameters
+    ----------
+    data : Tokenized
+        The tokenized input data.
+    inference_cdr3_beta_constraints : list
+        List of CDR3 beta scaling constraints. Each tuple contains:
+        (beta_value, cdr_regions)
+        where cdr_regions is a list of (chain_id, start_res, end_res) tuples
+
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - cdr3_token_mask: [N_tokens] boolean mask for CDR3 residues
+        - cdr3_beta_value: scalar beta scaling value
+    """
+    token_data = data.tokens
+    num_tokens = len(token_data)
+
+    # Create mask for CDR3 tokens
+    cdr3_mask = torch.zeros(num_tokens, dtype=torch.bool)
+    beta_value = 0.0
+
+    for beta_val, cdr_regions in inference_cdr3_beta_constraints:
+        beta_value = beta_val  # Use the last (only) constraint for now
+
+        for cdr_chain_id, start_res, end_res in cdr_regions:
+            for idx, token in enumerate(token_data):
+                if (
+                    token["asym_id"] == cdr_chain_id
+                    and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+                    and start_res <= token["res_idx"] <= end_res
+                ):
+                    cdr3_mask[idx] = True
+
+    return {
+        "cdr3_token_mask": cdr3_mask,
+        "cdr3_beta_value": torch.tensor([beta_value], dtype=torch.float32),
+    }
+
+
 class Boltz2Featurizer:
     """Boltz2 featurizer."""
 
@@ -2402,6 +2451,9 @@ class Boltz2Featurizer:
         ] = None,
         inference_antigen_orientation_constraints: Optional[
             list[tuple[int, float, list[tuple[int, int, int]], bool]]
+        ] = None,
+        inference_cdr3_beta_constraints: Optional[
+            list[tuple[float, list[tuple[int, int, int]]]]
         ] = None,
         compute_affinity: bool = False,
     ) -> dict[str, Tensor]:
@@ -2535,6 +2587,7 @@ class Boltz2Featurizer:
         contact_constraint_features = {}
         cdr3_constraint_features = {}
         antigen_orientation_constraint_features = {}
+        cdr3_beta_constraint_features = {}
         if compute_constraint_features:
             residue_constraint_features = process_residue_constraint_features(data)
             chain_constraint_features = process_chain_feature_constraints(data)
@@ -2551,6 +2604,10 @@ class Boltz2Featurizer:
                 data=data,
                 inference_antigen_constraints=inference_antigen_orientation_constraints if inference_antigen_orientation_constraints else [],
             )
+            cdr3_beta_constraint_features = process_cdr3_beta_constraints(
+                data=data,
+                inference_cdr3_beta_constraints=inference_cdr3_beta_constraints if inference_cdr3_beta_constraints else [],
+            )
 
         return {
             **token_features,
@@ -2565,5 +2622,6 @@ class Boltz2Featurizer:
             **contact_constraint_features,
             **cdr3_constraint_features,
             **antigen_orientation_constraint_features,
+            **cdr3_beta_constraint_features,
             **ligand_to_mw,
         }

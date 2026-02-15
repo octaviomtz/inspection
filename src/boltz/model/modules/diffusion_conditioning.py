@@ -92,6 +92,23 @@ class DiffusionConditioning(Module):
             relative_position_encoding,
         )
 
+        # Apply CDR3 beta scaling if enabled
+        if "cdr3_token_mask" in feats and "cdr3_beta_value" in feats:
+            cdr3_mask = feats["cdr3_token_mask"]
+            cdr3_beta = feats["cdr3_beta_value"]
+            beta_val = cdr3_beta.item() if hasattr(cdr3_beta, "item") else float(cdr3_beta)
+
+            if abs(beta_val) > 1e-6:  # Only apply if non-zero
+                # Create pair mask: True for (i,j) where both i and j are in CDR3
+                # cdr3_mask shape: [n_tokens], z shape: [batch, n_tokens, n_tokens, tz]
+                cdr3_pair_mask = cdr3_mask.unsqueeze(-1) & cdr3_mask.unsqueeze(-2)  # [n_tokens, n_tokens]
+                # Apply scaling: z[CDR3] *= (1 + beta)
+                z = torch.where(
+                    cdr3_pair_mask.unsqueeze(0).unsqueeze(-1),  # [1, n_tokens, n_tokens, 1]
+                    z * (1 + beta_val),
+                    z
+                )
+
         q, c, p, to_keys = self.atom_encoder(
             feats=feats,
             s_trunk=s_trunk,  # Float['b n ts'],
