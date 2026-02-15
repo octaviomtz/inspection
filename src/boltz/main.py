@@ -174,6 +174,10 @@ class BoltzSteeringParams:
     contact_guidance_update: bool = True
     cdr3_steering: bool = False
     antigen_steering: bool = False
+    epitope_scanning: bool = False
+    scan_regions: int = 10
+    region_beta_emphasis: float = 0.5
+    region_beta_deemphasis: float = -0.3
     num_gd_steps: int = 20
 
 
@@ -1003,6 +1007,30 @@ def cli() -> None:
          "Requires --use_potentials. Define using antigen_orientation constraints in YAML.",
 )
 @click.option(
+    "--epitope_scanning",
+    is_flag=True,
+    help="Enable epitope region scanning to discover unknown epitopes. "
+         "Define using epitope_region_scanning constraints in YAML.",
+)
+@click.option(
+    "--scan_regions",
+    type=int,
+    default=10,
+    help="Number of antigen regions to scan for epitope discovery. Default is 10.",
+)
+@click.option(
+    "--region_beta_emphasis",
+    type=float,
+    default=0.5,
+    help="Beta value for emphasizing a region during scanning. Default is 0.5.",
+)
+@click.option(
+    "--region_beta_deemphasis",
+    type=float,
+    default=-0.3,
+    help="Beta value for de-emphasizing other regions. Default is -0.3.",
+)
+@click.option(
     "--num_particles",
     type=int,
     default=3,
@@ -1114,6 +1142,10 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     use_potentials: bool = False,
     cdr3_steering: bool = False,
     antigen_steering: bool = False,
+    epitope_scanning: bool = False,
+    scan_regions: int = 10,
+    region_beta_emphasis: float = 0.5,
+    region_beta_deemphasis: float = -0.3,
     num_particles: int = 3,
     model: Literal["boltz1", "boltz2"] = "boltz2",
     method: Optional[str] = None,
@@ -1359,6 +1391,10 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         steering_args.physical_guidance_update = use_potentials
         steering_args.cdr3_steering = cdr3_steering
         steering_args.antigen_steering = antigen_steering
+        steering_args.epitope_scanning = epitope_scanning
+        steering_args.scan_regions = scan_regions
+        steering_args.region_beta_emphasis = region_beta_emphasis
+        steering_args.region_beta_deemphasis = region_beta_deemphasis
         steering_args.num_particles = num_particles
 
         # Validate CDR3 steering requires potentials

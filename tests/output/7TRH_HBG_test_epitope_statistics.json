@@ -1,0 +1,18 @@
+{
+  "num_predictions": 10,
+  "num_residues": 350,
+  "num_hotspots": 70,
+  "heatmap_statistics": {
+    "min": 0.0,
+    "max": 0.5379003882408142,
+    "mean": 0.20453621447086334,
+    "median": 0.20653459429740906,
+    "std": 0.09951876848936081
+  },
+  "contact_frequency_statistics": {
+    "min": 0.0,
+    "max": 0.699999988079071,
+    "mean": 0.2882857322692871,
+    "median": 0.30000001192092896
+  }
+}

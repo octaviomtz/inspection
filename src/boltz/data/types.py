@@ -538,6 +538,10 @@ class InferenceOptions:
     antigen_orientation_constraints: Optional[
         list[tuple[int, float, list[tuple[int, int, int]], bool]]
     ] = None
+    # Epitope region scanning constraints: (antigen_chain_id, num_regions, beta_emphasis, beta_deemphasis, contact_threshold, confidence_weighting)
+    epitope_region_scanning_constraints: Optional[
+        list[tuple[int, int, float, float, float, bool]]
+    ] = None
 
 
 @dataclass(frozen=True)

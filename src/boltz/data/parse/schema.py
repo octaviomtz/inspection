@@ -1514,6 +1514,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
     contact_constraints = []
     cdr3_constraints = []
     antigen_orientation_constraints = []
+    epitope_region_scanning_constraints = []
     constraints = schema.get("constraints", [])
     for constraint in constraints:
         if "bond" in constraint:
@@ -1666,6 +1667,31 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
 
             force = antigen_data.get("force", True)
             antigen_orientation_constraints.append((antigen_chain_id, contact_threshold, cdr_regions, force))
+        elif "epitope_region_scanning" in constraint:
+            if not boltz_2:
+                msg = "Epitope region scanning constraint is not supported in Boltz-1!"
+                raise ValueError(msg)
+
+            epitope_data = constraint["epitope_region_scanning"]
+            if "antigen_chain" not in epitope_data:
+                msg = "Epitope region scanning constraint requires antigen_chain"
+                raise ValueError(msg)
+
+            antigen_chain_name = epitope_data["antigen_chain"]
+            if antigen_chain_name not in chain_to_idx:
+                msg = f"Antigen chain {antigen_chain_name} not found in input!"
+                raise ValueError(msg)
+
+            antigen_chain_id = chain_to_idx[antigen_chain_name]
+            num_regions = epitope_data.get("num_regions", 10)
+            beta_emphasis = epitope_data.get("beta_emphasis", 0.5)
+            beta_deemphasis = epitope_data.get("beta_deemphasis", -0.3)
+            contact_threshold = epitope_data.get("contact_threshold", 8.0)
+            confidence_weighting = epitope_data.get("confidence_weighting", True)
+
+            epitope_region_scanning_constraints.append(
+                (antigen_chain_id, num_regions, beta_emphasis, beta_deemphasis, contact_threshold, confidence_weighting)
+            )
         else:
             msg = f"Invalid constraint: {constraint}"
             raise ValueError(msg)
@@ -1882,6 +1908,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
         contact_constraints=contact_constraints,
         cdr3_constraints=cdr3_constraints if cdr3_constraints else None,
         antigen_orientation_constraints=antigen_orientation_constraints if antigen_orientation_constraints else None,
+        epitope_region_scanning_constraints=epitope_region_scanning_constraints if epitope_region_scanning_constraints else None,
     )
     record = Record(
         id=name,

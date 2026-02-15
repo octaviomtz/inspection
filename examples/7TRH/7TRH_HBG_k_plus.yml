@@ -1,0 +1,37 @@
+sequences:
+- protein:
+    id: A
+    sequence: APLHLGKCNIAGWILGNPECESLSTASSWSYIVETPSSDNGTCYPGDFIDYEELREQLSSVSSFERFEIFPKTSSWPNHDSDKGVTAACPHAGAKSFYKNLIWLVKKGNSYPKLSKSYINDKGKEVLVLWGIHHPSTSADQQSLYQNADAYVFVGSSRYSKTFKPEIAIRPKVRDREGRMNYYWTLVEPGDKITFEATGNLVVPRYAFAMERNA
+    msa: ../msa_antigen_cut_new/antigen_7TRH_HBG.a3m
+- protein:
+    id: B
+    sequence: EVQLVESGGGLIQPGGSLRLSCEASAFTFSSYEMNWVRQAPGKGLEWVSYITSSGSRIYYADSVKGRFTISRDNAKNSLYLQMNSLRVEDTAVYYCARLLDSIVWGEGWYYGMDVWGQGTTVTVSG
+    msa: empty
+- protein:
+    id: C
+    sequence: SYELTQSPSVSVAPGRTARITCGGNDIGLKGVHWYQQKPGQAPVLVLYDNNHRPSGIPERFSGSISGDTATLTVTRVEADDGADYFCQVWDTSSGPPHVIFGGGTKLTVL
+    msa: empty
+
+constraints:
+  # Method K+: Region-Specific β-Scaling for Epitope Discovery
+  # This constraint enables systematic scanning of the antigen surface
+  # by running multiple predictions with different regions emphasized.
+  - epitope_region_scanning:
+      # Target antigen chain
+      antigen_chain: A
+
+      # Region definition
+      num_regions: 10                     # Partition antigen into 10 regions
+      region_overlap_ratio: 0.2           # 20% overlap between adjacent regions
+
+      # Beta-scaling parameters (latent space modulation)
+      beta_emphasis: 0.5                  # Boost pair representations for emphasized region
+      beta_deemphasis: -0.3               # Suppress pair representations for other regions
+
+      # Contact evaluation
+      contact_threshold: 8.0              # Distance threshold for contact definition (Angstroms)
+      confidence_weighting: true          # Weight contact frequency by pLDDT/pAE scores
+
+      # Output options
+      accumulate_heatmap: true            # Generate epitope propensity heatmap
+      save_per_region: false              # Optionally save per-region predictions
