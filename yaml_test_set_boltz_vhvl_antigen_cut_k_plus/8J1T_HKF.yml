@@ -1,0 +1,24 @@
+sequences:
+- protein:
+    id: A
+    sequence: NLCPFDEVFNATRFASVYAWNRKRISNCVADYSVLYNFAPFFAFKCYGVSPTKLNDLCFTNVYADSFVIRGNEVSQIAPGQTGNIADYNYKLPDDFTGCVIAWNSNKLDSKVGGNYNYRYRLFRKSNLKPFERDISTEIYQAGNKPCNGVAGVNCYFPLQSYGFRPTYGVGHQPYRVVVLSFELLHAPATVCGP
+    msa: examples/msa_antigen_cut_new/antigen_8J1T_HKF.a3m
+- protein:
+    id: B
+    sequence: VQLVESGGGLVQPGGSLRLSCAASGLTVSSNYMNWVRQAPGKGLEWVSVFYPGGSTFYADSVRGRFTISRDNSKNTLYLQMNSLRAEDTAVYYCARDHSGHALDIWGQGTMVTVS
+    msa: empty
+- protein:
+    id: C
+    sequence: DIQMTQSPSFLSASVGDRVTITCRASQGISSYLAWYQQKPGKAPKLLIYAASTLQSGVPSRFSGSGSGTEFTLTISSLQPEDFATYYCQHLNSYPSMYTFGQGTKVDI
+    msa: empty
+constraints:
+- epitope_region_scanning:
+    antigen_chain: A
+    num_regions: 10
+    region_overlap_ratio: 0.2
+    beta_emphasis: 0.5
+    beta_deemphasis: -0.3
+    contact_threshold: 8.0
+    confidence_weighting: true
+    accumulate_heatmap: true
+    save_per_region: false
