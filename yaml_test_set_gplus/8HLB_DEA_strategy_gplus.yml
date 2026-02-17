@@ -1,0 +1,25 @@
+sequences:
+- protein:
+    id: A
+    msa: examples/msa_antigen_cut_new/antigen_8HLB_DEA.a3m
+    sequence: TPYAPEPGSTCRLREYYDQTAQMCCSKCSPGQHAKVFCTKTSDTVCDSCEDSTYTQLWNWVPECLSCGSRCSSDQVETQACTREQNRICTCRPGWYCALSKQEGCRLCAPLR
+- protein:
+    id: B
+    msa: empty
+    sequence: KVQLQQSGAELVKPGASVKLSCKASGYTFTESIIHWVKQRSGQGLEWIGWFYPGSDNINYNEKFKDKATLTADKSSSTVYMELTRLTSEDSAVYFCASHEGPYVYFDYWGQGTTLTVSS
+- protein:
+    id: C
+    msa: empty
+    sequence: DIVMTQSHKFMSTSVGDRVSITCKASQDVSTAVAWYQQKPGQSPKLLIYWTSTRHTGVPDRFTGSGSGTDYTLTISSVQAEDLALYYCQHHYSTPYTFGGGTKLEIQ
+constraints:
+- antigen_orientation:
+    antigen_chain: A
+    contact_threshold: 8.0
+    cdr3_regions:
+    - chain: B
+      start_res: 97
+      end_res: 108
+    - chain: C
+      start_res: 89
+      end_res: 97
+    force: true

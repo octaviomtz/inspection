@@ -176,6 +176,13 @@ class BoltzSteeringParams:
     antigen_steering: bool = False
     num_gd_steps: int = 20
 
+    # Strategy G+ parameters (adaptive phases)
+    adaptive_phases: bool = False
+    phase_improvement_threshold: float = 0.05
+    phase_improvement_window: int = 10
+    contact_computation_stride: int = 1
+    verbose_phases: bool = False
+
 
 @rank_zero_only
 def download_boltz1(cache: Path) -> None:
@@ -1003,6 +1010,31 @@ def cli() -> None:
          "Requires --use_potentials. Define using antigen_orientation constraints in YAML.",
 )
 @click.option(
+    "--adaptive_phases",
+    is_flag=True,
+    help="Enable adaptive phase scheduling for Strategy G+ (progressive refinement). "
+         "Automatically transitions between exploration, transition, and optimization phases based on contact scores.",
+)
+@click.option(
+    "--phase_improvement_threshold",
+    type=float,
+    default=0.05,
+    help="Contact score improvement threshold for phase advancement. Default is 0.05 (5% improvement).",
+)
+@click.option(
+    "--phase_improvement_window",
+    type=int,
+    default=10,
+    help="Number of diffusion steps for computing contact improvement. Default is 10.",
+)
+@click.option(
+    "--contact_computation_stride",
+    type=int,
+    default=1,
+    help="Stride for computing contact scores (every Nth step). Default is 1 (every step). "
+         "Increase to reduce computational cost.",
+)
+@click.option(
     "--num_particles",
     type=int,
     default=3,
@@ -1114,6 +1146,10 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     use_potentials: bool = False,
     cdr3_steering: bool = False,
     antigen_steering: bool = False,
+    adaptive_phases: bool = False,
+    phase_improvement_threshold: float = 0.05,
+    phase_improvement_window: int = 10,
+    contact_computation_stride: int = 1,
     num_particles: int = 3,
     model: Literal["boltz1", "boltz2"] = "boltz2",
     method: Optional[str] = None,
@@ -1360,6 +1396,10 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         steering_args.cdr3_steering = cdr3_steering
         steering_args.antigen_steering = antigen_steering
         steering_args.num_particles = num_particles
+        steering_args.adaptive_phases = adaptive_phases
+        steering_args.phase_improvement_threshold = phase_improvement_threshold
+        steering_args.phase_improvement_window = phase_improvement_window
+        steering_args.contact_computation_stride = contact_computation_stride
 
         # Validate CDR3 steering requires potentials
         if cdr3_steering and not use_potentials:
@@ -1369,6 +1409,11 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         # Validate antigen steering requires potentials
         if antigen_steering and not use_potentials:
             msg = "Antigen steering (--antigen_steering) requires potentials to be enabled (--use_potentials)"
+            raise click.UsageError(msg)
+
+        # Validate adaptive_phases requires potentials
+        if adaptive_phases and not use_potentials:
+            msg = "Adaptive phases (--adaptive_phases) requires potentials to be enabled (--use_potentials)"
             raise click.UsageError(msg)
 
         model_cls = Boltz2 if model == "boltz2" else Boltz1

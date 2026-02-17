@@ -1,0 +1,25 @@
+sequences:
+- protein:
+    id: A
+    msa: examples/msa_antigen_cut_new/antigen_8TRS_AGD.a3m
+    sequence: KKCPELLQGLAHFPETIAGSDAPSLATVAGTCVDHAVVPPGGEEPRMHCAVDGEWLVPIGQCLCQAGYEKVEDACQACSPGFFKFEASESPCLECPEHTLPSPEGATSCECEEGFFRAPQDPASMPCTLVP
+- protein:
+    id: B
+    msa: empty
+    sequence: EVQLVESGGGLVQPGGSLRLSCAASGFTIYYSSMHWVRQAPGKGLEWVASISSYYGYTYYADSVKGRFTISADTSKNTAYLQMNSLRAEDTAVYYCARYYAMDYWGQGTLVTVFN
+- protein:
+    id: C
+    msa: empty
+    sequence: DIQMTQSPSSLSASVGDRVTITCRASQSVSSAVAWYQQKPGKAPKLLIYSASSLYSGVPSRFSGSRSGTDFTLTISSLQPEDFATYYCQQYYGYGGYPITFGQGTKVEIK
+constraints:
+- antigen_orientation:
+    antigen_chain: A
+    contact_threshold: 8.0
+    cdr3_regions:
+    - chain: B
+      start_res: 97
+      end_res: 104
+    - chain: C
+      start_res: 89
+      end_res: 100
+    force: true

@@ -33,6 +33,8 @@ from boltz.model.modules.utils import (
     log,
 )
 from boltz.model.potentials.potentials import get_potentials
+from boltz.model.potentials.phase_scheduler import AdaptivePhaseScheduler
+from boltz.model.potentials.contact_scoring import compute_cdr_antigen_contacts
 
 
 class DiffusionModule(Module):
@@ -301,6 +303,15 @@ class AtomDiffusion(Module):
         steering_args=None,
         **network_condition_kwargs,
     ):
+        # Initialize phase scheduler if adaptive_phases is enabled
+        phase_scheduler = None
+        if steering_args is not None and steering_args.get("adaptive_phases", False):
+            phase_scheduler = AdaptivePhaseScheduler(
+                improvement_threshold=steering_args.get("phase_improvement_threshold", 0.05),
+                improvement_window=steering_args.get("phase_improvement_window", 10),
+                verbose=steering_args.get("verbose_phases", False),
+            )
+
         if steering_args is not None and (
             steering_args["fk_steering"]
             or steering_args["physical_guidance_update"]
@@ -445,11 +456,30 @@ class AtomDiffusion(Module):
                     steering_args["physical_guidance_update"]
                     or steering_args["contact_guidance_update"]
                 ) and step_idx < num_sampling_steps - 1:
+                    # Compute contact score and update phase if using adaptive scheduling
+                    if phase_scheduler is not None and step_idx % steering_args.get("contact_computation_stride", 1) == 0:
+                        contact_score, _ = compute_cdr_antigen_contacts(
+                            atom_coords_denoised,
+                            network_condition_kwargs["feats"],
+                        )
+                        phase, phase_guidance_weight, phase_cdr3_beta = phase_scheduler.get_phase_parameters(
+                            contact_score,
+                            step_idx,
+                            num_sampling_steps,
+                        )
+                        # Override steering_t with phase-based weight if using adaptive phases
+                        if phase_scheduler is not None:
+                            steering_t_phase = phase_guidance_weight
+                        else:
+                            steering_t_phase = steering_t
+                    else:
+                        steering_t_phase = steering_t
+
                     guidance_update = torch.zeros_like(atom_coords_denoised)
                     for guidance_step in range(steering_args["num_gd_steps"]):
                         energy_gradient = torch.zeros_like(atom_coords_denoised)
                         for potential in potentials:
-                            parameters = potential.compute_parameters(steering_t)
+                            parameters = potential.compute_parameters(steering_t_phase)
                             if (
                                 parameters["guidance_weight"] > 0
                                 and (guidance_step) % parameters["guidance_interval"]

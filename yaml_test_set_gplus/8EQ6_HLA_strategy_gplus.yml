@@ -1,0 +1,25 @@
+sequences:
+- protein:
+    id: A
+    msa: examples/msa_antigen_cut_new/antigen_8EQ6_HLA.a3m
+    sequence: PPTFSPALLVVTEGDNATFTCSFSNTSESFVLNWYRMSPSNQTDKLAAFPEDRSQPGQDSRFRVTQLPNGRDFHMSVVRARRNDSGTYLCGAISLAPKAQIKESLRAELRVTER
+- protein:
+    id: B
+    msa: empty
+    sequence: QVQLVQSGAEVKKPGASVKVSCKAFGYTFTTYPIEWMRQAPGKGLEWIGNFHPYNDDTKYNEKFQGRVTLTVDKSSTTVYMELSSLRSEDTAVYYCARENYGSHGGFVYWGQGTLVTVSS
+- protein:
+    id: C
+    msa: empty
+    sequence: ENQLTQSPSSLSASVGDRVTITCRASSSVISSYLHWYQQKPGKAPKLLIYSTSNLASGVPSRFSGSGSGTDYTLTISSLQPEDFATYYCQQYNSYPLTFGGGTKLEIK
+constraints:
+- antigen_orientation:
+    antigen_chain: A
+    contact_threshold: 8.0
+    cdr3_regions:
+    - chain: B
+      start_res: 97
+      end_res: 109
+    - chain: C
+      start_res: 90
+      end_res: 98
+    force: true
