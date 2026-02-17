@@ -1,0 +1,24 @@
+sequences:
+- protein:
+    id: A
+    sequence: KVFGRCELAAAMKRHGLDNYRGYSLGNWVCAAKFESNFNTQATNRNTDGSTDYGILQINSRWWCNDGRTPGSRNLCNIPCSALLSSDITASVNCAKKIVSDGNGMNAWVAWRNRCKGTDVQAWIRGCR
+    msa: ../msa_antigen_cut_new/antigen_8GQ1_HLC.a3m
+- protein:
+    id: B
+    sequence: DVQLQESGPSLVKPSQTLSLTCSVTGDSITSDYWSWIRKFPGNRLEYMGYVSYSGSTYYNPSLKSRISITRDTSKNQYYLDLNSVTTEDTATYYCANWDGDYWGQGTLVTVSA
+    msa: empty
+- protein:
+    id: C
+    sequence: DIVLTQSPATLSVTPGNSVSLSCRASQSIGNNLHWYQQKSHESPRLLIKYASQSISGIPSRFRGRGRGTRFRLSINSVETEDFGMYFCQQSNSWPYTFGGGTKLEIK
+    msa: empty
+
+constraints:
+  - cdr3_beta_scaling:
+      beta: 0.3
+      cdr3_regions:
+        - chain: B          # Heavy chain CDR3: residues 97-103
+          start_res: 97
+          end_res: 103
+        - chain: C          # Light chain CDR3: residues 90-98
+          start_res: 90
+          end_res: 98

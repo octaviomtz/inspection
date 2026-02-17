@@ -1,0 +1,24 @@
+sequences:
+- protein:
+    id: A
+    sequence: KKCPELLQGLAHFPETIAGSDAPSLATVAGTCVDHAVVPPGGEEPRMHCAVDGEWLVPIGQCLCQAGYEKVEDACQACSPGFFKFEASESPCLECPEHTLPSPEGATSCECEEGFFRAPQDPASMPCTLVP
+    msa: ../msa_antigen_cut_new/antigen_8TRS_AGD.a3m
+- protein:
+    id: B
+    sequence: EVQLVESGGGLVQPGGSLRLSCAASGFTIYYSSMHWVRQAPGKGLEWVASISSYYGYTYYADSVKGRFTISADTSKNTAYLQMNSLRAEDTAVYYCARYYAMDYWGQGTLVTVFN
+    msa: empty
+- protein:
+    id: C
+    sequence: DIQMTQSPSSLSASVGDRVTITCRASQSVSSAVAWYQQKPGKAPKLLIYSASSLYSGVPSRFSGSRSGTDFTLTISSLQPEDFATYYCQQYYGYGGYPITFGQGTKVEIK
+    msa: empty
+
+constraints:
+  - cdr3_beta_scaling:
+      beta: 0.3
+      cdr3_regions:
+        - chain: B          # Heavy chain CDR3: residues 98-105
+          start_res: 98
+          end_res: 105
+        - chain: C          # Light chain CDR3: residues 90-101
+          start_res: 90
+          end_res: 101

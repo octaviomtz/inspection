@@ -1,0 +1,24 @@
+sequences:
+- protein:
+    id: A
+    sequence: LCPFHEVFNATTFASVYAWNRKRISNCVADYSVIYNFAPFFAFKCYGVSPTKLNDLCFTNVYADSFVIRGNEVSQIAPGQTGNIADYNYKLPDDFTGCVIAWNSNKLDSKPSGNYNYLYRLFRKSKLKPFERDISTEIYQAGNKPCNGVAGSNCYSPLQSYGFRPTYGVGHQPYRVVVLSF
+    msa: ../msa_antigen_cut_new/antigen_8FXB_HLE.a3m
+- protein:
+    id: B
+    sequence: QVQLVQSGAEVKKPGASVKVSCKASGYPFTSYGISWVRQAPGQGLEWMGWISTYNGNTNYAQKFQGRVTMTTDTSTTTGYMELRRLRSDDTAVYYCARDYTRGAWFGESLIGGFDNWGQGTLVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: EIVLTQSPGTLSLSPGERATLSCRASQTVSSTSLAWYQQKPGQAPRLLIYGASSRATGIPDRFSGSGSGTDFTLTISRLEPEDFAVYYCQQHDTSLTFGGGTKVEIK
+    msa: empty
+
+constraints:
+  - cdr3_beta_scaling:
+      beta: 0.3
+      cdr3_regions:
+        - chain: B          # Heavy chain CDR3: residues 98-117
+          start_res: 98
+          end_res: 117
+        - chain: C          # Light chain CDR3: residues 91-98
+          start_res: 91
+          end_res: 98
