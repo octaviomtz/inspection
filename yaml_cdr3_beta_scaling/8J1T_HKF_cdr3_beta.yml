@@ -2,7 +2,7 @@ sequences:
 - protein:
     id: A
     sequence: NLCPFDEVFNATRFASVYAWNRKRISNCVADYSVLYNFAPFFAFKCYGVSPTKLNDLCFTNVYADSFVIRGNEVSQIAPGQTGNIADYNYKLPDDFTGCVIAWNSNKLDSKVGGNYNYRYRLFRKSNLKPFERDISTEIYQAGNKPCNGVAGVNCYFPLQSYGFRPTYGVGHQPYRVVVLSFELLHAPATVCGP
-    msa: ../msa_antigen_cut_new/antigen_8J1T_HKF.a3m
+    msa: examples/msa_antigen_cut_new/antigen_8J1T_HKF.a3m
 - protein:
     id: B
     sequence: VQLVESGGGLVQPGGSLRLSCAASGLTVSSNYMNWVRQAPGKGLEWVSVFYPGGSTFYADSVRGRFTISRDNSKNTLYLQMNSLRAEDTAVYYCARDHSGHALDIWGQGTMVTVS
@@ -11,14 +11,13 @@ sequences:
     id: C
     sequence: DIQMTQSPSFLSASVGDRVTITCRASQGISSYLAWYQQKPGKAPKLLIYAASTLQSGVPSRFSGSGSGTEFTLTISSLQPEDFATYYCQHLNSYPSMYTFGQGTKVDI
     msa: empty
-
 constraints:
-  - cdr3_beta_scaling:
-      beta: 0.3
-      cdr3_regions:
-        - chain: B          # Heavy chain CDR3: residues 96-106
-          start_res: 96
-          end_res: 106
-        - chain: C          # Light chain CDR3: residues 90-100
-          start_res: 90
-          end_res: 100
+- cdr3_beta_scaling:
+    beta: 0.3
+    cdr3_regions:
+    - chain: B
+      start_res: 96
+      end_res: 106
+    - chain: C
+      start_res: 90
+      end_res: 100

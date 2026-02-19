@@ -2,7 +2,7 @@ sequences:
 - protein:
     id: A
     sequence: PNITNLCPFDEVFNATRFASVYAWNRKRISNCVADYSVLYNLAPFFTFKCYGVSPTKLNDLCFTNVYADSFVIRGDEVRQIAPGQTGNIADYNYKLPDDFTGCVIAWNSNKLDSKVSGNYNYLYRLFRKSNLKPFERDISTEIYQAGNKPCNGVAGFNCYFPLRSYSFRPTYGVGHQPYRVVVLSFELLHAPATVCGPKKS
-    msa: ../msa_antigen_cut_new/antigen_7WT9_HAE.a3m
+    msa: examples/msa_antigen_cut_new/antigen_7WT9_HAE.a3m
 - protein:
     id: B
     sequence: VQLVESGGGLVQPGGSLRLSCAASGIIVSSNYMSWVRQGPGKGLEWVSVIYSGGSTYYADSVKARFTISRDNSKNTLYLQMNSLRAEDTAVYYCAREVVGSNSNMDVWGQGTTVTVSS
@@ -11,14 +11,13 @@ sequences:
     id: C
     sequence: DIQMTQSPSSLSASVGDRVTITCQASQDINIYLNWYQQKPGKAPKLLIYDASNLETGVPSRFSGSGSGTDFTFTINSLQPEDIATYYCQQYDNLPRTFGQGTKVEIK
     msa: empty
-
 constraints:
-  - cdr3_beta_scaling:
-      beta: 0.3
-      cdr3_regions:
-        - chain: B          # Heavy chain CDR3: residues 96-108
-          start_res: 96
-          end_res: 108
-        - chain: C          # Light chain CDR3: residues 90-98
-          start_res: 90
-          end_res: 98
+- cdr3_beta_scaling:
+    beta: 0.3
+    cdr3_regions:
+    - chain: B
+      start_res: 96
+      end_res: 108
+    - chain: C
+      start_res: 90
+      end_res: 98

@@ -2,7 +2,7 @@ sequences:
 - protein:
     id: A
     sequence: PPSTALRELIEELVNITQNQKAPLCNGSMVWSINLTAGMYCAALESLINVSGCSAIEKTQRMLSGFCPHKVSAGQFSSLHVRDTKIEVAQFVKDLLLHLKKLFREGQFN
-    msa: ../msa_antigen_cut_new/antigen_8BLQ_ABD.a3m
+    msa: examples/msa_antigen_cut_new/antigen_8BLQ_ABD.a3m
 - protein:
     id: B
     sequence: EVQLKESGPGLVAPGGSLSITCTVSGFSLTDSSINWVRQPPGKGLEWLGMIWGDGRIDYADALKSRLSISKDSSKSQVFLEMTSLRTDDTATYYCARDGYFPYAMDFWGQGTSVTVSS
@@ -11,14 +11,13 @@ sequences:
     id: C
     sequence: DIVLTQSPASLAVSLGQRATISCRASESVDSYGQSYMHWYQQKAGQPPKLLIYLASNLESGVPARFSGSGSRTDFTLTIDPVQAEDAATYYCQQNAEDSRTFGGGTKLEIK
     msa: empty
-
 constraints:
-  - cdr3_beta_scaling:
-      beta: 0.3
-      cdr3_regions:
-        - chain: B          # Heavy chain CDR3: residues 97-108
-          start_res: 97
-          end_res: 108
-        - chain: C          # Light chain CDR3: residues 94-102
-          start_res: 94
-          end_res: 102
+- cdr3_beta_scaling:
+    beta: 0.3
+    cdr3_regions:
+    - chain: B
+      start_res: 97
+      end_res: 108
+    - chain: C
+      start_res: 94
+      end_res: 102
