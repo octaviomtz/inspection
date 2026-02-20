@@ -1,0 +1,26 @@
+sequences:
+- protein:
+    id: A
+    sequence: TNLCPFGEVFNATRFASVYAWNRKRISNCVADYSVLYNSASFSTFKCYGVSPTKLNDLCFTNVYADSFVIRGDEVRQIAPGQTGKIADYNYKLPDDFTGCVIAWNSNNLDSKVGGNYNYLYRLFRKSNLKPFERDISTEIYQAGSTPCNGVEGFNCYFPLQSYGFQPTNGVGYQPYRVVVLSFELLHAPATVCG
+    msa: examples/msa_antigen_cut_new/antigen_8IV4_HLG.a3m
+- protein:
+    id: B
+    sequence: EVMLVESGGGVVKPGGSLKLSCAASGFSFSTYAMSWIRQTPEKSLEWVAAISSGGTNTYYPGSVKGRFTISRDKAMNTLYLQLSSLRSEDTAMYYCVRHSGNYVDSVMDYWGQGTSVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: QIVLTQSPAIMSASLGEEITLTCSVSSSVSDMHWYQQKSGTSPKVFIYSTSNLASGVPSRFSGSGSGTFYSLTISSVEAEDAAYYYCHQWSSWTFGGGTKLEIK
+    msa: empty
+
+constraints:
+  - antigen_orientation:
+      antigen_chain: A
+      contact_threshold: 8.0
+      cdr3_regions:
+        - chain: B          # Heavy chain CDR3: residues 97-110
+          start_res: 97
+          end_res: 110
+        - chain: C          # Light chain CDR3: residues 88-94
+          start_res: 88
+          end_res: 94
+      force: true

@@ -1073,16 +1073,276 @@ class Boltz2(LightningModule):
                 # This will aggregate, compute and log all metrics
                 validator.on_epoch_end(model=self)
 
+    # ── Method Q: Iterative Epitope Refinement helpers ──
+
+    def _forward_trunk(
+        self,
+        feats: dict[str, Tensor],
+        recycling_steps: int = 0,
+    ) -> tuple:
+        """Run trunk only (embeddings, pairformer, MSA, diffusion conditioning).
+
+        Returns (s, z, s_inputs, diffusion_conditioning, pdistogram).
+        """
+        with torch.set_grad_enabled(False):
+            s_inputs = self.input_embedder(feats)
+            s_init = self.s_init(s_inputs)
+            z_init = (
+                self.z_init_1(s_inputs)[:, :, None]
+                + self.z_init_2(s_inputs)[:, None, :]
+            )
+            relative_position_encoding = self.rel_pos(feats)
+            z_init = z_init + relative_position_encoding
+            z_init = z_init + self.token_bonds(feats["token_bonds"].float())
+            if self.bond_type_feature:
+                z_init = z_init + self.token_bonds_type(feats["type_bonds"].long())
+            z_init = z_init + self.contact_conditioning(feats)
+
+            s = torch.zeros_like(s_init)
+            z = torch.zeros_like(z_init)
+            mask = feats["token_pad_mask"].float()
+            pair_mask = mask[:, :, None] * mask[:, None, :]
+
+            if self.run_trunk_and_structure:
+                for i in range(recycling_steps + 1):
+                    s = s_init + self.s_recycle(self.s_norm(s))
+                    z = z_init + self.z_recycle(self.z_norm(z))
+
+                    if self.use_templates:
+                        template_module = (
+                            self.template_module._orig_mod  # noqa: SLF001
+                            if self.is_template_compiled and not self.training
+                            else self.template_module
+                        )
+                        z = z + template_module(
+                            z, feats, pair_mask, use_kernels=self.use_kernels
+                        )
+
+                    msa_module = (
+                        self.msa_module._orig_mod  # noqa: SLF001
+                        if self.is_msa_compiled and not self.training
+                        else self.msa_module
+                    )
+                    z = z + msa_module(
+                        z, s_inputs, feats, use_kernels=self.use_kernels
+                    )
+
+                    pairformer_module = (
+                        self.pairformer_module._orig_mod  # noqa: SLF001
+                        if self.is_pairformer_compiled and not self.training
+                        else self.pairformer_module
+                    )
+                    s, z = pairformer_module(
+                        s, z, mask=mask, pair_mask=pair_mask,
+                        use_kernels=self.use_kernels,
+                    )
+
+            pdistogram = self.distogram_module(z)
+
+            q, c, to_keys, atom_enc_bias, atom_dec_bias, token_trans_bias = (
+                self.diffusion_conditioning(
+                    s_trunk=s, z_trunk=z,
+                    relative_position_encoding=relative_position_encoding,
+                    feats=feats,
+                )
+            )
+            diffusion_conditioning = {
+                "q": q, "c": c, "to_keys": to_keys,
+                "atom_enc_bias": atom_enc_bias,
+                "atom_dec_bias": atom_dec_bias,
+                "token_trans_bias": token_trans_bias,
+            }
+
+        return s, z, s_inputs, diffusion_conditioning, pdistogram
+
+    @staticmethod
+    def _compute_contact_heatmap(
+        coords: Tensor,
+        antigen_atom_index: Tensor,
+        cdr_atom_index: Tensor,
+        contact_threshold: float = 8.0,
+    ) -> Tensor:
+        """Compute per-antigen-residue contact frequency across samples.
+
+        Args:
+            coords: [num_samples, num_atoms, 3] predicted coordinates
+            antigen_atom_index: [N_antigen] CA atom indices for antigen
+            cdr_atom_index: [N_cdr] CA atom indices for CDR regions
+            contact_threshold: distance cutoff in Angstrom
+
+        Returns:
+            contact_freq: [N_antigen] contact frequencies (0.0 to 1.0)
+        """
+        antigen_coords = coords[:, antigen_atom_index, :]  # [S, N_ag, 3]
+        cdr_coords = coords[:, cdr_atom_index, :]  # [S, N_cdr, 3]
+        dists = torch.cdist(antigen_coords, cdr_coords)  # [S, N_ag, N_cdr]
+        min_dists = dists.min(dim=-1).values  # [S, N_ag]
+        contacts = (min_dists < contact_threshold).float()  # [S, N_ag]
+        return contacts.mean(dim=0)  # [N_ag]
+
+    @staticmethod
+    def _identify_hotspots(
+        contact_freq: Tensor,
+        antigen_atom_index: Tensor,
+        percentile: float = 0.8,
+    ) -> Tensor:
+        """Select antigen residues with contact frequency above percentile.
+
+        Args:
+            contact_freq: [N_antigen] per-residue contact frequencies
+            antigen_atom_index: [N_antigen] atom indices
+            percentile: quantile threshold (0.8 = top 20%)
+
+        Returns:
+            hotspot_atom_index: [N_hotspot] atom indices for hotspot residues
+        """
+        if contact_freq.numel() == 0:
+            return antigen_atom_index
+
+        threshold = torch.quantile(contact_freq, percentile)
+        mask = contact_freq >= threshold
+
+        if mask.sum() == 0:
+            k = max(1, int(0.2 * contact_freq.numel()))
+            _, topk = torch.topk(contact_freq, k)
+            mask = torch.zeros_like(contact_freq, dtype=torch.bool)
+            mask[topk] = True
+
+        return antigen_atom_index[mask]
+
+    def predict_step_iterative(
+        self,
+        batch: dict,
+        recycling_steps: int,
+        sampling_steps: int,
+        diffusion_samples: int,
+        max_parallel_samples: int,
+    ) -> dict:
+        """Method Q: 3-round iterative epitope refinement.
+
+        Round 1: Broad exploration with weak guidance on all antigen residues
+        Round 2: Targeted refinement on hotspot residues with medium guidance
+        Round 3: Validation with full guidance on refined hotspot residues
+        """
+        steering = self.steering_args
+        weight_scales = steering["iterative_weight_scales"]
+        fk_lambda_scales = steering["iterative_fk_lambda_scales"]
+        beta_noise_magnitude = steering["iterative_beta_noise"]
+        hotspot_percentile = steering["iterative_hotspot_percentile"]
+        contact_threshold = steering["iterative_contact_threshold"]
+        num_rounds = steering["iterative_num_rounds"]
+
+        # Run trunk ONCE (expensive - saves ~60% compute per extra round)
+        s, z, s_inputs, diffusion_conditioning, pdistogram = self._forward_trunk(
+            batch, recycling_steps=recycling_steps,
+        )
+
+        # Save original antigen indices for contact analysis
+        original_antigen_atom_index = batch["antigen_atom_index"].clone()
+
+        all_round_coords = []
+
+        for round_idx in range(num_rounds):
+            # Build per-round steering args
+            round_steering = dict(steering)
+            round_steering["antigen_weight_scale"] = weight_scales[round_idx]
+            round_steering["fk_lambda"] = steering["fk_lambda"] * fk_lambda_scales[round_idx]
+
+            # Beta noise only for Round 1 (exploration)
+            round_beta_noise = beta_noise_magnitude if round_idx == 0 else 0.0
+
+            # Run diffusion sampling
+            with torch.autocast("cuda", enabled=False):
+                struct_out = self.structure_module.sample(
+                    s_trunk=s.float(),
+                    s_inputs=s_inputs.float(),
+                    feats=batch,
+                    num_sampling_steps=sampling_steps,
+                    atom_mask=batch["atom_pad_mask"].float(),
+                    multiplicity=diffusion_samples,
+                    max_parallel_samples=max_parallel_samples,
+                    steering_args=round_steering,
+                    diffusion_conditioning=diffusion_conditioning,
+                    beta_noise=round_beta_noise,
+                )
+
+            round_coords = struct_out["sample_atom_coords"]
+            all_round_coords.append(round_coords)
+
+            # Between rounds: compute contacts and identify hotspots
+            if round_idx < num_rounds - 1:
+                # Always use ORIGINAL full antigen indices for contact analysis
+                orig_antigen_idx = original_antigen_atom_index[0]
+                cdr_idx = batch["cdr_atom_index"][0]
+
+                contact_freq = self._compute_contact_heatmap(
+                    round_coords, orig_antigen_idx, cdr_idx, contact_threshold,
+                )
+
+                hotspot_idx = self._identify_hotspots(
+                    contact_freq, orig_antigen_idx, percentile=hotspot_percentile,
+                )
+
+                print(
+                    f"  Iterative refinement Round {round_idx + 1}: "
+                    f"{orig_antigen_idx.shape[0]} antigen residues -> "
+                    f"{hotspot_idx.shape[0]} hotspot residues "
+                    f"(top {int((1 - hotspot_percentile) * 100)}%)"
+                )
+
+                # Update features for next round
+                batch["antigen_atom_index"] = hotspot_idx.unsqueeze(0)
+
+        # Restore original features
+        batch["antigen_atom_index"] = original_antigen_atom_index
+
+        # Build output dict
+        dict_out = {
+            "sample_atom_coords": all_round_coords[-1],
+            "diff_token_repr": struct_out.get("diff_token_repr"),
+            "pdistogram": pdistogram,
+            "s": s,
+            "z": z,
+        }
+
+        # Run confidence on final round coordinates
+        if self.confidence_prediction:
+            dict_out.update(
+                self.confidence_module(
+                    s_inputs=s_inputs.detach(),
+                    s=s.detach(),
+                    z=z.detach(),
+                    x_pred=all_round_coords[-1].detach(),
+                    feats=batch,
+                    pred_distogram_logits=pdistogram[:, :, :, 0].detach(),
+                    multiplicity=diffusion_samples,
+                    run_sequentially=True,
+                    use_kernels=self.use_kernels,
+                )
+            )
+
+        return dict_out
+
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> dict:
         try:
-            out = self(
-                batch,
-                recycling_steps=self.predict_args["recycling_steps"],
-                num_sampling_steps=self.predict_args["sampling_steps"],
-                diffusion_samples=self.predict_args["diffusion_samples"],
-                max_parallel_samples=self.predict_args["max_parallel_samples"],
-                run_confidence_sequentially=True,
-            )
+            # Method Q: dispatch to iterative epitope refinement
+            if self.steering_args.get("iterative_refinement", False):
+                out = self.predict_step_iterative(
+                    batch,
+                    recycling_steps=self.predict_args["recycling_steps"],
+                    sampling_steps=self.predict_args["sampling_steps"],
+                    diffusion_samples=self.predict_args["diffusion_samples"],
+                    max_parallel_samples=self.predict_args["max_parallel_samples"],
+                )
+            else:
+                out = self(
+                    batch,
+                    recycling_steps=self.predict_args["recycling_steps"],
+                    num_sampling_steps=self.predict_args["sampling_steps"],
+                    diffusion_samples=self.predict_args["diffusion_samples"],
+                    max_parallel_samples=self.predict_args["max_parallel_samples"],
+                    run_confidence_sequentially=True,
+                )
             pred_dict = {"exception": False}
             if "keys_dict_batch" in self.predict_args:
                 for key in self.predict_args["keys_dict_batch"]:

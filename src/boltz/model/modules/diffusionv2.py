@@ -299,6 +299,7 @@ class AtomDiffusion(Module):
         multiplicity=1,
         max_parallel_samples=None,
         steering_args=None,
+        beta_noise=0.0,
         **network_condition_kwargs,
     ):
         if steering_args is not None and (
@@ -343,6 +344,14 @@ class AtomDiffusion(Module):
         # atom position is noise at the beginning
         init_sigma = sigmas[0]
         atom_coords = init_sigma * torch.randn(shape, device=self.device)
+
+        # Apply per-sample beta noise for exploration (Method Q Round 1)
+        if beta_noise > 0.0:
+            noise_scale = 1.0 + beta_noise * (
+                2.0 * torch.rand(multiplicity, 1, 1, device=self.device) - 1.0
+            )
+            atom_coords = atom_coords * noise_scale
+
         token_repr = None
         atom_coords_denoised = None
 

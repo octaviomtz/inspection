@@ -175,6 +175,14 @@ class BoltzSteeringParams:
     cdr3_steering: bool = False
     antigen_steering: bool = False
     num_gd_steps: int = 20
+    # Method Q: Iterative Epitope Refinement
+    iterative_refinement: bool = False
+    iterative_num_rounds: int = 3
+    iterative_weight_scales: tuple = (0.1, 0.5, 1.0)
+    iterative_fk_lambda_scales: tuple = (0.5, 1.0, 1.0)
+    iterative_beta_noise: float = 0.3
+    iterative_hotspot_percentile: float = 0.8
+    iterative_contact_threshold: float = 8.0
 
 
 @rank_zero_only
@@ -1010,6 +1018,24 @@ def cli() -> None:
          "With steering enabled, total samples = diffusion_samples × num_particles. Default is 3.",
 )
 @click.option(
+    "--iterative_refinement",
+    is_flag=True,
+    help="Enable Method Q iterative epitope refinement (3-round prediction). "
+         "Requires --use_potentials and --antigen_steering.",
+)
+@click.option(
+    "--iterative_beta_noise",
+    type=float,
+    default=0.3,
+    help="Per-sample random scaling magnitude for Round 1 exploration. Default 0.3.",
+)
+@click.option(
+    "--iterative_hotspot_percentile",
+    type=float,
+    default=0.8,
+    help="Percentile threshold for hotspot identification (0.8 = top 20%%). Default 0.8.",
+)
+@click.option(
     "--model",
     default="boltz2",
     type=click.Choice(["boltz1", "boltz2"]),
@@ -1115,6 +1141,9 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     cdr3_steering: bool = False,
     antigen_steering: bool = False,
     num_particles: int = 3,
+    iterative_refinement: bool = False,
+    iterative_beta_noise: float = 0.3,
+    iterative_hotspot_percentile: float = 0.8,
     model: Literal["boltz1", "boltz2"] = "boltz2",
     method: Optional[str] = None,
     affinity_mw_correction: Optional[bool] = False,
@@ -1370,6 +1399,15 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         if antigen_steering and not use_potentials:
             msg = "Antigen steering (--antigen_steering) requires potentials to be enabled (--use_potentials)"
             raise click.UsageError(msg)
+
+        # Validate iterative refinement requires potentials and antigen steering
+        if iterative_refinement and (not use_potentials or not antigen_steering):
+            msg = "Iterative refinement (--iterative_refinement) requires --use_potentials and --antigen_steering"
+            raise click.UsageError(msg)
+
+        steering_args.iterative_refinement = iterative_refinement
+        steering_args.iterative_beta_noise = iterative_beta_noise
+        steering_args.iterative_hotspot_percentile = iterative_hotspot_percentile
 
         model_cls = Boltz2 if model == "boltz2" else Boltz1
         model_module = model_cls.load_from_checkpoint(

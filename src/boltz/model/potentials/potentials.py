@@ -936,17 +936,19 @@ def get_potentials(steering_args, boltz2=False):
         )
     # Add antigen orientation potential if enabled
     if boltz2 and steering_args.get("antigen_steering", False):
+        # Per-round guidance scaling for iterative epitope refinement (Method Q)
+        scale = steering_args.get("antigen_weight_scale", 1.0)
         potentials.append(
             AntigenOrientationPotential(
                 parameters={
                     "guidance_interval": 2,
                     "guidance_weight": PiecewiseStepFunction(
                         thresholds=[0.3, 0.7],
-                        values=[1.5, 1.0, 0.3]  # Strong early, weaker late
+                        values=[1.5 * scale, 1.0 * scale, 0.3 * scale]
                     ),
                     "resampling_weight": PiecewiseStepFunction(
                         thresholds=[0.5],
-                        values=[1.0, 0.5]  # Heavy resampling early
+                        values=[1.0 * scale, 0.5 * scale]
                     ),
                     "union_lambda": ExponentialInterpolation(
                         start=8.0, end=0.0, alpha=-2.0
