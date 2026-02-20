@@ -45,6 +45,64 @@ from boltz.model.optim.ema import EMA
 from boltz.model.optim.scheduler import AlphaFoldLRScheduler
 
 
+def apply_epitope_beta_scaling(
+    z: Tensor,
+    feats: dict[str, Tensor],
+    active_region: int,
+) -> Tensor:
+    """Apply region-specific beta-scaling to pair representation z.
+
+    Scales z[binder, antigen_region] and z[antigen_region, binder] by
+    (1 + beta_emphasis) for the active region and (1 + beta_deemphasis)
+    for all other antigen regions.
+
+    Parameters
+    ----------
+    z : Tensor
+        Pair representation [B, N_tokens, N_tokens, dim_z].
+    feats : dict
+        Feature dictionary containing epitope scanning masks.
+    active_region : int
+        Index of the region to emphasize.
+
+    Returns
+    -------
+    Tensor
+        Modified pair representation with beta-scaling applied.
+    """
+    binder_mask = feats["epitope_binder_token_mask"][0]  # [N_tokens]
+    region_masks = feats["epitope_region_masks"][0]  # [num_regions, N_tokens]
+    antigen_mask = feats["epitope_antigen_token_mask"][0]  # [N_tokens]
+    beta_emphasis = feats["epitope_beta_emphasis"][0].item()
+    beta_deemphasis = feats["epitope_beta_deemphasis"][0].item()
+
+    num_regions = region_masks.shape[0]
+    z_scaled = z.clone()
+
+    # Apply deemphasis to all antigen regions first
+    # z[binder, antigen] *= (1 + beta_deemphasis)
+    binder_idx = binder_mask.nonzero(as_tuple=True)[0]
+    antigen_idx = antigen_mask.nonzero(as_tuple=True)[0]
+
+    if binder_idx.numel() > 0 and antigen_idx.numel() > 0:
+        # De-emphasize all binder-antigen pairs
+        z_scaled[:, binder_idx[:, None], antigen_idx[None, :], :] *= (1 + beta_deemphasis)
+        z_scaled[:, antigen_idx[:, None], binder_idx[None, :], :] *= (1 + beta_deemphasis)
+
+        # Now emphasize the active region (override the deemphasis)
+        if active_region < num_regions:
+            active_mask = region_masks[active_region]  # [N_tokens]
+            active_idx = active_mask.nonzero(as_tuple=True)[0]
+
+            if active_idx.numel() > 0:
+                # Undo deemphasis and apply emphasis for the active region
+                emphasis_factor = (1 + beta_emphasis) / (1 + beta_deemphasis)
+                z_scaled[:, binder_idx[:, None], active_idx[None, :], :] *= emphasis_factor
+                z_scaled[:, active_idx[:, None], binder_idx[None, :], :] *= emphasis_factor
+
+    return z_scaled
+
+
 class Boltz2(LightningModule):
     """Boltz2 model."""
 
@@ -425,6 +483,7 @@ class Boltz2(LightningModule):
         multiplicity_diffusion_train: int = 1,
         diffusion_samples: int = 1,
         max_parallel_samples: Optional[int] = None,
+        epitope_active_region: int = -1,
         run_confidence_sequentially: bool = False,
     ) -> dict[str, Tensor]:
         with torch.set_grad_enabled(
@@ -519,13 +578,24 @@ class Boltz2(LightningModule):
                 and ((not self.training) or self.confidence_prediction)
                 and (not self.skip_run_structure)
             ):
+                # Apply epitope region beta-scaling to z before diffusion conditioning
+                z_for_diffusion = z
+                if (
+                    epitope_active_region >= 0
+                    and "epitope_scanning_active" in feats
+                    and feats["epitope_scanning_active"][0].item()
+                ):
+                    z_for_diffusion = apply_epitope_beta_scaling(
+                        z, feats, epitope_active_region
+                    )
+
                 if self.checkpoint_diffusion_conditioning and self.training:
                     # TODO decide whether this should be with bf16 or not
                     q, c, to_keys, atom_enc_bias, atom_dec_bias, token_trans_bias = (
                         torch.utils.checkpoint.checkpoint(
                             self.diffusion_conditioning,
                             s,
-                            z,
+                            z_for_diffusion,
                             relative_position_encoding,
                             feats,
                         )
@@ -534,7 +604,7 @@ class Boltz2(LightningModule):
                     q, c, to_keys, atom_enc_bias, atom_dec_bias, token_trans_bias = (
                         self.diffusion_conditioning(
                             s_trunk=s,
-                            z_trunk=z,
+                            z_trunk=z_for_diffusion,
                             relative_position_encoding=relative_position_encoding,
                             feats=feats,
                         )
@@ -1075,14 +1145,63 @@ class Boltz2(LightningModule):
 
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> dict:
         try:
-            out = self(
-                batch,
-                recycling_steps=self.predict_args["recycling_steps"],
-                num_sampling_steps=self.predict_args["sampling_steps"],
-                diffusion_samples=self.predict_args["diffusion_samples"],
-                max_parallel_samples=self.predict_args["max_parallel_samples"],
-                run_confidence_sequentially=True,
+            # Check if epitope region scanning is active
+            epitope_scanning = (
+                self.steering_args is not None
+                and self.steering_args.get("epitope_scanning", False)
+                and "epitope_scanning_active" in batch
+                and batch["epitope_scanning_active"][0].item()
             )
+
+            if epitope_scanning:
+                num_regions = batch["epitope_num_regions"][0].item()
+                all_region_coords = []
+                all_region_plddt = []
+
+                for region_id in range(num_regions):
+                    region_out = self(
+                        batch,
+                        recycling_steps=self.predict_args["recycling_steps"],
+                        num_sampling_steps=self.predict_args["sampling_steps"],
+                        diffusion_samples=self.predict_args["diffusion_samples"],
+                        max_parallel_samples=self.predict_args["max_parallel_samples"],
+                        run_confidence_sequentially=True,
+                        epitope_active_region=region_id,
+                    )
+                    all_region_coords.append(region_out["sample_atom_coords"])
+                    if self.confidence_prediction and "complex_plddt" in region_out:
+                        all_region_plddt.append(region_out["complex_plddt"])
+
+                # Use the best-confidence prediction as the primary output
+                if all_region_plddt:
+                    best_idx = torch.stack(all_region_plddt).argmax().item()
+                else:
+                    best_idx = 0
+
+                # Re-run with the best region for full confidence output
+                out = self(
+                    batch,
+                    recycling_steps=self.predict_args["recycling_steps"],
+                    num_sampling_steps=self.predict_args["sampling_steps"],
+                    diffusion_samples=self.predict_args["diffusion_samples"],
+                    max_parallel_samples=self.predict_args["max_parallel_samples"],
+                    run_confidence_sequentially=True,
+                    epitope_active_region=best_idx,
+                )
+                # Store all region coordinates for downstream contact analysis
+                out["epitope_all_region_coords"] = torch.stack(all_region_coords)
+                out["epitope_best_region"] = torch.tensor([best_idx])
+                out["epitope_num_regions"] = torch.tensor([num_regions])
+            else:
+                out = self(
+                    batch,
+                    recycling_steps=self.predict_args["recycling_steps"],
+                    num_sampling_steps=self.predict_args["sampling_steps"],
+                    diffusion_samples=self.predict_args["diffusion_samples"],
+                    max_parallel_samples=self.predict_args["max_parallel_samples"],
+                    run_confidence_sequentially=True,
+                )
+
             pred_dict = {"exception": False}
             if "keys_dict_batch" in self.predict_args:
                 for key in self.predict_args["keys_dict_batch"]:
@@ -1092,6 +1211,12 @@ class Boltz2(LightningModule):
             pred_dict["token_masks"] = batch["token_pad_mask"]
             pred_dict["s"] = out["s"]
             pred_dict["z"] = out["z"]
+
+            # Store epitope scanning results
+            if epitope_scanning:
+                pred_dict["epitope_all_region_coords"] = out["epitope_all_region_coords"]
+                pred_dict["epitope_best_region"] = out["epitope_best_region"]
+                pred_dict["epitope_num_regions"] = out["epitope_num_regions"]
 
             if "keys_dict_out" in self.predict_args:
                 for key in self.predict_args["keys_dict_out"]:

@@ -2354,6 +2354,117 @@ def process_antigen_orientation_constraints(
     }
 
 
+def process_epitope_region_scanning_constraints(
+    data: Tokenized,
+    inference_epitope_constraints: list[tuple[int, int, float, float, float, bool]],
+):
+    """Process epitope region scanning constraints.
+
+    Creates feature tensors for region-specific beta-scaling of
+    pair representations during diffusion inference.
+
+    Parameters
+    ----------
+    data : Tokenized
+        The tokenized input data.
+    inference_epitope_constraints : list
+        List of epitope scanning constraints. Each tuple contains:
+        (antigen_chain_id, num_regions, beta_emphasis, beta_deemphasis,
+         contact_threshold, confidence_weighting)
+
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - epitope_scanning_active: [1] bool tensor
+        - epitope_antigen_token_mask: [N_tokens] bool tensor
+        - epitope_binder_token_mask: [N_tokens] bool tensor
+        - epitope_region_masks: [num_regions, N_tokens] bool tensor
+        - epitope_beta_emphasis: [1] float tensor
+        - epitope_beta_deemphasis: [1] float tensor
+        - epitope_num_regions: [1] int tensor
+    """
+    token_data = data.tokens
+    num_tokens = token_data.shape[0]
+
+    if not inference_epitope_constraints:
+        return {
+            "epitope_scanning_active": torch.tensor([False]),
+            "epitope_antigen_token_mask": torch.zeros(num_tokens, dtype=torch.bool),
+            "epitope_binder_token_mask": torch.zeros(num_tokens, dtype=torch.bool),
+            "epitope_region_masks": torch.zeros(1, num_tokens, dtype=torch.bool),
+            "epitope_beta_emphasis": torch.tensor([0.0]),
+            "epitope_beta_deemphasis": torch.tensor([0.0]),
+            "epitope_num_regions": torch.tensor([0], dtype=torch.long),
+        }
+
+    # Use the first constraint (typically only one antigen)
+    (
+        antigen_chain_id,
+        num_regions,
+        beta_emphasis,
+        beta_deemphasis,
+        contact_threshold,
+        confidence_weighting,
+    ) = inference_epitope_constraints[0]
+
+    # Build antigen token mask
+    antigen_mask = torch.zeros(num_tokens, dtype=torch.bool)
+    antigen_token_indices = []
+    for i, token in enumerate(token_data):
+        if (
+            token["asym_id"] == antigen_chain_id
+            and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+        ):
+            antigen_mask[i] = True
+            antigen_token_indices.append(i)
+
+    # Build binder token mask (all other protein chains)
+    binder_mask = torch.zeros(num_tokens, dtype=torch.bool)
+    for i, token in enumerate(token_data):
+        if (
+            token["asym_id"] != antigen_chain_id
+            and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+        ):
+            binder_mask[i] = True
+
+    # Create region masks by sequentially partitioning antigen tokens
+    n_antigen = len(antigen_token_indices)
+    region_masks = torch.zeros(num_regions, num_tokens, dtype=torch.bool)
+
+    if n_antigen > 0 and num_regions > 0:
+        # Compute region boundaries ensuring full coverage with overlap
+        # Each region is a contiguous stretch of antigen tokens
+        import math
+        overlap_ratio = 0.2
+        # region_size chosen so that regions with overlap cover all tokens
+        region_size = max(1, math.ceil(n_antigen / (num_regions * (1 - overlap_ratio) + overlap_ratio)))
+        stride = max(1, math.ceil(region_size * (1 - overlap_ratio)))
+
+        for r in range(num_regions):
+            start = r * stride
+            end = min(start + region_size, n_antigen)
+            # Ensure the last region covers the tail
+            if r == num_regions - 1:
+                end = n_antigen
+                start = min(start, max(0, n_antigen - region_size))
+            if start >= n_antigen:
+                start = max(0, n_antigen - region_size)
+                end = n_antigen
+            for idx in range(start, end):
+                region_masks[r, antigen_token_indices[idx]] = True
+
+    return {
+        "epitope_scanning_active": torch.tensor([True]),
+        "epitope_antigen_token_mask": antigen_mask,
+        "epitope_binder_token_mask": binder_mask,
+        "epitope_region_masks": region_masks,
+        "epitope_beta_emphasis": torch.tensor([beta_emphasis]),
+        "epitope_beta_deemphasis": torch.tensor([beta_deemphasis]),
+        "epitope_num_regions": torch.tensor([num_regions], dtype=torch.long),
+    }
+
+
 class Boltz2Featurizer:
     """Boltz2 featurizer."""
 
@@ -2402,6 +2513,9 @@ class Boltz2Featurizer:
         ] = None,
         inference_antigen_orientation_constraints: Optional[
             list[tuple[int, float, list[tuple[int, int, int]], bool]]
+        ] = None,
+        inference_epitope_region_scanning_constraints: Optional[
+            list[tuple[int, int, float, float, float, bool]]
         ] = None,
         compute_affinity: bool = False,
     ) -> dict[str, Tensor]:
@@ -2535,6 +2649,7 @@ class Boltz2Featurizer:
         contact_constraint_features = {}
         cdr3_constraint_features = {}
         antigen_orientation_constraint_features = {}
+        epitope_region_scanning_features = {}
         if compute_constraint_features:
             residue_constraint_features = process_residue_constraint_features(data)
             chain_constraint_features = process_chain_feature_constraints(data)
@@ -2551,6 +2666,10 @@ class Boltz2Featurizer:
                 data=data,
                 inference_antigen_constraints=inference_antigen_orientation_constraints if inference_antigen_orientation_constraints else [],
             )
+            epitope_region_scanning_features = process_epitope_region_scanning_constraints(
+                data=data,
+                inference_epitope_constraints=inference_epitope_region_scanning_constraints if inference_epitope_region_scanning_constraints else [],
+            )
 
         return {
             **token_features,
@@ -2565,5 +2684,6 @@ class Boltz2Featurizer:
             **contact_constraint_features,
             **cdr3_constraint_features,
             **antigen_orientation_constraint_features,
+            **epitope_region_scanning_features,
             **ligand_to_mw,
         }
