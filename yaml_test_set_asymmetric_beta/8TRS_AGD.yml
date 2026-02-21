@@ -1,0 +1,26 @@
+sequences:
+- protein:
+    id: A
+    sequence: KKCPELLQGLAHFPETIAGSDAPSLATVAGTCVDHAVVPPGGEEPRMHCAVDGEWLVPIGQCLCQAGYEKVEDACQACSPGFFKFEASESPCLECPEHTLPSPEGATSCECEEGFFRAPQDPASMPCTLVP
+    msa: examples/msa_antigen_cut_new/antigen_8TRS_AGD.a3m
+- protein:
+    id: B
+    sequence: EVQLVESGGGLVQPGGSLRLSCAASGFTIYYSSMHWVRQAPGKGLEWVASISSYYGYTYYADSVKGRFTISADTSKNTAYLQMNSLRAEDTAVYYCARYYAMDYWGQGTLVTVFN
+    msa: empty
+- protein:
+    id: C
+    sequence: DIQMTQSPSSLSASVGDRVTITCRASQSVSSAVAWYQQKPGKAPKLLIYSASSLYSGVPSRFSGSRSGTDFTLTISSLQPEDFATYYCQQYYGYGGYPITFGQGTKVEIK
+    msa: empty
+
+constraints:
+  - asymmetric_beta_scaling:
+      h3_region:
+        chain: B
+        start_res: 97
+        end_res: 104
+      l3_region:
+        chain: C
+        start_res: 89
+        end_res: 100
+      beta_h: 0.4
+      beta_l: 0.1

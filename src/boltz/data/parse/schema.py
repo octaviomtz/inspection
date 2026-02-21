@@ -1514,6 +1514,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
     contact_constraints = []
     cdr3_constraints = []
     antigen_orientation_constraints = []
+    asymmetric_beta_constraints = []
     constraints = schema.get("constraints", [])
     for constraint in constraints:
         if "bond" in constraint:
@@ -1666,6 +1667,44 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
 
             force = antigen_data.get("force", True)
             antigen_orientation_constraints.append((antigen_chain_id, contact_threshold, cdr_regions, force))
+        elif "asymmetric_beta_scaling" in constraint:
+            if not boltz_2:
+                msg = "Asymmetric beta scaling constraint is not supported in Boltz-1!"
+                raise ValueError(msg)
+
+            ab_data = constraint["asymmetric_beta_scaling"]
+            if "h3_region" not in ab_data or "l3_region" not in ab_data:
+                msg = "Asymmetric beta scaling requires h3_region and l3_region"
+                raise ValueError(msg)
+
+            h3 = ab_data["h3_region"]
+            l3 = ab_data["l3_region"]
+            for region_name, region in [("h3_region", h3), ("l3_region", l3)]:
+                for field in ["chain", "start_res", "end_res"]:
+                    if field not in region:
+                        msg = f"Asymmetric beta scaling {region_name} requires {field}"
+                        raise ValueError(msg)
+
+            h3_chain_name = h3["chain"]
+            l3_chain_name = l3["chain"]
+            if h3_chain_name not in chain_to_idx:
+                msg = f"H3 chain {h3_chain_name} not found in input!"
+                raise ValueError(msg)
+            if l3_chain_name not in chain_to_idx:
+                msg = f"L3 chain {l3_chain_name} not found in input!"
+                raise ValueError(msg)
+
+            h3_chain_id = chain_to_idx[h3_chain_name]
+            h3_start = h3["start_res"] - 1  # Convert to 0-indexed
+            h3_end = h3["end_res"] - 1  # Convert to 0-indexed
+            l3_chain_id = chain_to_idx[l3_chain_name]
+            l3_start = l3["start_res"] - 1
+            l3_end = l3["end_res"] - 1
+
+            beta_h = ab_data.get("beta_h", 0.4)
+            beta_l = ab_data.get("beta_l", 0.1)
+
+            asymmetric_beta_constraints.append((h3_chain_id, h3_start, h3_end, l3_chain_id, l3_start, l3_end, beta_h, beta_l))
         else:
             msg = f"Invalid constraint: {constraint}"
             raise ValueError(msg)
@@ -1882,6 +1921,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
         contact_constraints=contact_constraints,
         cdr3_constraints=cdr3_constraints if cdr3_constraints else None,
         antigen_orientation_constraints=antigen_orientation_constraints if antigen_orientation_constraints else None,
+        asymmetric_beta_constraints=asymmetric_beta_constraints if asymmetric_beta_constraints else None,
     )
     record = Record(
         id=name,

@@ -1,0 +1,26 @@
+sequences:
+- protein:
+    id: A
+    sequence: NLCPFGEVFNATRFASVYAWNRKRISNCVADYSVLYNSASFSTFKCYGVSPTKLNDLCFTNVYADSFVIRGDEVRQIAPGQTGKIADYNYKLPDDFTGCVIAWNSNNLDSKVGGNYNYLYRLFRKSNLKPFERDISTEIYQAGSTPCNGVEGFNCYFPLQSYGFQPTNGVGYQPYRVVVLSFELLHAPATVCGP
+    msa: examples/msa_antigen_cut_new/antigen_7Y0O_HLA.a3m
+- protein:
+    id: B
+    sequence: QMQLVQSGAEVKKPGASVKVSCKASGYTFTSYAISWVRQAPGQGLEWMGRIIPILGIANYAQKFQGRVTITADESTSTAYMELSSRSEDTAVYYCASGAFYYGSGSYPFDYWGQGT
+    msa: empty
+- protein:
+    id: C
+    sequence: DIQLTQSPSSLSASVGDRVTITCRASQDISDYLNWYQQKPGKAPKLLIYAASSLQSGVPSRFSGSGSGTDFTLTISNLQPEDFATYYCQQSYSAPRTFGQGTKVEIK
+    msa: empty
+
+constraints:
+  - asymmetric_beta_scaling:
+      h3_region:
+        chain: B
+        start_res: 96
+        end_res: 111
+      l3_region:
+        chain: C
+        start_res: 89
+        end_res: 97
+      beta_h: 0.4
+      beta_l: 0.1

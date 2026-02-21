@@ -2354,6 +2354,75 @@ def process_antigen_orientation_constraints(
     }
 
 
+def process_asymmetric_beta_constraints(
+    data: Tokenized,
+    inference_asymmetric_beta_constraints: list[tuple[int, int, int, int, int, int, float, float]],
+):
+    """Process asymmetric beta scaling constraints.
+
+    Creates atom-level boolean masks for H3 and L3 CDR regions and stores
+    beta scaling values for use in the diffusion denoising step.
+
+    Parameters
+    ----------
+    data : Tokenized
+        The tokenized input data.
+    inference_asymmetric_beta_constraints : list
+        List of constraints. Each tuple contains:
+        (h3_chain_id, h3_start, h3_end, l3_chain_id, l3_start, l3_end, beta_h, beta_l)
+
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - h3_atom_mask: [N_atoms] boolean tensor for H3 region atoms
+        - l3_atom_mask: [N_atoms] boolean tensor for L3 region atoms
+        - beta_h: scalar tensor for H3 scaling factor
+        - beta_l: scalar tensor for L3 scaling factor
+    """
+    token_data = data.tokens
+    structure = data.structure
+    n_atoms = structure["atom_to_token"].shape[0]
+
+    h3_atom_mask = torch.zeros(n_atoms, dtype=torch.bool)
+    l3_atom_mask = torch.zeros(n_atoms, dtype=torch.bool)
+    beta_h_val = 0.4
+    beta_l_val = 0.1
+
+    for h3_chain_id, h3_start, h3_end, l3_chain_id, l3_start, l3_end, beta_h, beta_l in inference_asymmetric_beta_constraints:
+        beta_h_val = beta_h
+        beta_l_val = beta_l
+
+        # Mark all atoms in H3 region
+        for token in token_data:
+            if (
+                token["asym_id"] == h3_chain_id
+                and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+                and h3_start <= token["res_idx"] <= h3_end
+            ):
+                atom_start = token["atom_idx"]
+                atom_end = atom_start + token["atom_num"]
+                h3_atom_mask[atom_start:atom_end] = True
+
+        # Mark all atoms in L3 region
+        for token in token_data:
+            if (
+                token["asym_id"] == l3_chain_id
+                and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+                and l3_start <= token["res_idx"] <= l3_end
+            ):
+                atom_start = token["atom_idx"]
+                atom_end = atom_start + token["atom_num"]
+                l3_atom_mask[atom_start:atom_end] = True
+
+    return {
+        "h3_atom_mask": h3_atom_mask,
+        "l3_atom_mask": l3_atom_mask,
+        "beta_h": torch.tensor([beta_h_val], dtype=torch.float32),
+        "beta_l": torch.tensor([beta_l_val], dtype=torch.float32),
+    }
+
+
 class Boltz2Featurizer:
     """Boltz2 featurizer."""
 
@@ -2402,6 +2471,9 @@ class Boltz2Featurizer:
         ] = None,
         inference_antigen_orientation_constraints: Optional[
             list[tuple[int, float, list[tuple[int, int, int]], bool]]
+        ] = None,
+        inference_asymmetric_beta_constraints: Optional[
+            list[tuple[int, int, int, int, int, int, float, float]]
         ] = None,
         compute_affinity: bool = False,
     ) -> dict[str, Tensor]:
@@ -2535,6 +2607,7 @@ class Boltz2Featurizer:
         contact_constraint_features = {}
         cdr3_constraint_features = {}
         antigen_orientation_constraint_features = {}
+        asymmetric_beta_constraint_features = {}
         if compute_constraint_features:
             residue_constraint_features = process_residue_constraint_features(data)
             chain_constraint_features = process_chain_feature_constraints(data)
@@ -2551,6 +2624,10 @@ class Boltz2Featurizer:
                 data=data,
                 inference_antigen_constraints=inference_antigen_orientation_constraints if inference_antigen_orientation_constraints else [],
             )
+            asymmetric_beta_constraint_features = process_asymmetric_beta_constraints(
+                data=data,
+                inference_asymmetric_beta_constraints=inference_asymmetric_beta_constraints if inference_asymmetric_beta_constraints else [],
+            )
 
         return {
             **token_features,
@@ -2565,5 +2642,6 @@ class Boltz2Featurizer:
             **contact_constraint_features,
             **cdr3_constraint_features,
             **antigen_orientation_constraint_features,
+            **asymmetric_beta_constraint_features,
             **ligand_to_mw,
         }

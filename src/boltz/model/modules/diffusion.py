@@ -698,10 +698,28 @@ class AtomDiffusion(Module):
                 atom_coords_noisy = atom_coords_noisy.to(atom_coords_denoised)
 
             denoised_over_sigma = (atom_coords_noisy - atom_coords_denoised) / t_hat
-            atom_coords_next = (
-                atom_coords_noisy
-                + self.step_scale * (sigma_t - t_hat) * denoised_over_sigma
-            )
+            update = self.step_scale * (sigma_t - t_hat) * denoised_over_sigma
+            atom_coords_next = atom_coords_noisy + update
+
+            # Asymmetric beta scaling: modify step for H3/L3 regions
+            if (
+                steering_args is not None
+                and steering_args.get("asymmetric_beta_scaling", False)
+                and "h3_atom_mask" in network_condition_kwargs["feats"]
+            ):
+                feats = network_condition_kwargs["feats"]
+                h3_mask = feats["h3_atom_mask"][0]  # [N_atoms] boolean
+                l3_mask = feats["l3_atom_mask"][0]  # [N_atoms] boolean
+                beta_h = feats["beta_h"][0].item()
+                beta_l = feats["beta_l"][0].item()
+
+                # Create per-atom scaling: (1 + beta) for each region
+                region_scale = torch.ones(atom_coords_next.shape[:-1], device=self.device)
+                region_scale[:, h3_mask] = 1 + beta_h
+                region_scale[:, l3_mask] = 1 + beta_l
+
+                # Apply: only modify the denoising update, not the noisy part
+                atom_coords_next = atom_coords_noisy + region_scale.unsqueeze(-1) * update
 
             atom_coords = atom_coords_next
 

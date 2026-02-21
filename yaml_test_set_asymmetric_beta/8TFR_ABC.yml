@@ -1,0 +1,26 @@
+sequences:
+- protein:
+    id: A
+    sequence: VTTYKLVINGKTLKGETTTKAVDAETAEKAFKQYANDNGVDGVWTYDDATKTFTVT
+    msa: examples/msa_antigen_cut_new/antigen_8TFR_ABC.a3m
+- protein:
+    id: B
+    sequence: QVQLQESGPGLVKPSGTLSLTCTVSGGFISSRNWWSWVRQPPGKGLEWIGEVYHTGITNYNPSLKSRVTISVDKSKNQFSLKLSSVTAADTAVYYCAREVVGPTTGYFDLWGRGTLVTISS
+    msa: empty
+- protein:
+    id: C
+    sequence: SYELTQPPSVSVSPGQTARITCSGDTLPKRSGYWYQQKPDQAPLLVINKDTERPSGIPERFSGSKSGTTVTLTISGVQAEDEADYYCQSADSSFTYPSFGGGTKLTVL
+    msa: empty
+
+constraints:
+  - asymmetric_beta_scaling:
+      h3_region:
+        chain: B
+        start_res: 97
+        end_res: 110
+      l3_region:
+        chain: C
+        start_res: 88
+        end_res: 98
+      beta_h: 0.4
+      beta_l: 0.1

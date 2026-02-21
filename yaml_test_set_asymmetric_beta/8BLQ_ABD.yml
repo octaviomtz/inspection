@@ -1,0 +1,26 @@
+sequences:
+- protein:
+    id: A
+    sequence: PPSTALRELIEELVNITQNQKAPLCNGSMVWSINLTAGMYCAALESLINVSGCSAIEKTQRMLSGFCPHKVSAGQFSSLHVRDTKIEVAQFVKDLLLHLKKLFREGQFN
+    msa: examples/msa_antigen_cut_new/antigen_8BLQ_ABD.a3m
+- protein:
+    id: B
+    sequence: EVQLKESGPGLVAPGGSLSITCTVSGFSLTDSSINWVRQPPGKGLEWLGMIWGDGRIDYADALKSRLSISKDSSKSQVFLEMTSLRTDDTATYYCARDGYFPYAMDFWGQGTSVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: DIVLTQSPASLAVSLGQRATISCRASESVDSYGQSYMHWYQQKAGQPPKLLIYLASNLESGVPARFSGSGSRTDFTLTIDPVQAEDAATYYCQQNAEDSRTFGGGTKLEIK
+    msa: empty
+
+constraints:
+  - asymmetric_beta_scaling:
+      h3_region:
+        chain: B
+        start_res: 96
+        end_res: 107
+      l3_region:
+        chain: C
+        start_res: 93
+        end_res: 101
+      beta_h: 0.4
+      beta_l: 0.1

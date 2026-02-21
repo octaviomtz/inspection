@@ -538,6 +538,10 @@ class InferenceOptions:
     antigen_orientation_constraints: Optional[
         list[tuple[int, float, list[tuple[int, int, int]], bool]]
     ] = None
+    # Asymmetric beta scaling: (h3_chain_id, h3_start, h3_end, l3_chain_id, l3_start, l3_end, beta_h, beta_l)
+    asymmetric_beta_constraints: Optional[
+        list[tuple[int, int, int, int, int, int, float, float]]
+    ] = None
 
 
 @dataclass(frozen=True)
