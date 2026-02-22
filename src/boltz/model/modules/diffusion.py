@@ -708,10 +708,17 @@ class AtomDiffusion(Module):
                 and "h3_atom_mask" in network_condition_kwargs["feats"]
             ):
                 feats = network_condition_kwargs["feats"]
-                h3_mask = feats["h3_atom_mask"][0]  # [N_atoms] boolean
-                l3_mask = feats["l3_atom_mask"][0]  # [N_atoms] boolean
+                h3_mask_raw = feats["h3_atom_mask"][0]  # [N_atoms_unpadded] boolean
+                l3_mask_raw = feats["l3_atom_mask"][0]  # [N_atoms_unpadded] boolean
                 beta_h = feats["beta_h"][0].item()
                 beta_l = feats["beta_l"][0].item()
+
+                # Pad masks to match padded atom dimension
+                n_padded = atom_coords_next.shape[1]
+                h3_mask = torch.zeros(n_padded, dtype=torch.bool, device=self.device)
+                h3_mask[:h3_mask_raw.shape[0]] = h3_mask_raw
+                l3_mask = torch.zeros(n_padded, dtype=torch.bool, device=self.device)
+                l3_mask[:l3_mask_raw.shape[0]] = l3_mask_raw
 
                 # Create per-atom scaling: (1 + beta) for each region
                 region_scale = torch.ones(atom_coords_next.shape[:-1], device=self.device)
