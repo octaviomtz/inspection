@@ -1083,6 +1083,11 @@ def cli() -> None:
     is_flag=True,
     help="Run the model step by step, saving intermediate submodule outputs. Default is False.",
 )
+@click.option(
+    "--canonical_ensemble",
+    is_flag=True,
+    help="Run canonical ensemble sweep over beta values. Requires canonical_ensemble constraint in YAML.",
+)
 def predict(  # noqa: C901, PLR0915, PLR0912
     data: str,
     out_dir: str,
@@ -1125,6 +1130,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     no_kernels: bool = False,
     write_embeddings: bool = False,
     step_by_step: bool = False,
+    canonical_ensemble: bool = False,
 ) -> None:
     """Run predictions with Boltz."""
     # If cpu, write a friendly warning
@@ -1427,6 +1433,300 @@ def predict(  # noqa: C901, PLR0915, PLR0912
                 write_pde=write_full_pde,
                 verbose=True,
             )
+        elif canonical_ensemble:
+            import numpy as np
+            import json
+            from dataclasses import replace as dc_replace
+            from boltz.data.types import Coords, Interface, StructureV2
+            from boltz.data.write.mmcif import to_mmcif
+            from boltz.data.write.pdb import to_pdb
+
+            click.echo("\nRunning canonical ensemble sweep mode\n")
+
+            # Move model to device
+            if accelerator == "gpu" and torch.cuda.is_available():
+                model_device = torch.device("cuda:0")
+                model_module = model_module.to(model_device)
+                click.echo(f"Model moved to {model_device}")
+            else:
+                model_device = torch.device("cpu")
+
+            # Load batch from dataloader
+            data_module.setup(stage="predict")
+            dataloader = data_module.predict_dataloader()
+            batch = next(iter(dataloader))
+            batch = data_module.transfer_batch_to_device(batch, model_device, 0)
+
+            # Extract canonical_ensemble_params from record
+            record = batch["record"][0]
+            ce_params = record.inference_options.canonical_ensemble_params
+            if ce_params is None:
+                msg = (
+                    "--canonical_ensemble flag requires a canonical_ensemble "
+                    "constraint in the YAML file."
+                )
+                raise click.ClickException(msg)
+
+            beta_min, beta_max, beta_steps, top_k = ce_params
+            beta_values = np.linspace(beta_min, beta_max, beta_steps)
+            click.echo(
+                f"Sweeping {beta_steps} beta values from {beta_min} to {beta_max}, "
+                f"selecting top-{top_k}"
+            )
+
+            # ============================================================
+            # TRUNK: Run once (input_embedder -> recycling -> MSA/pairformer)
+            # ============================================================
+            click.echo("Running trunk (input_embedder + recycling + MSA + pairformer)...")
+            with torch.no_grad():
+                s_inputs = model_module.input_embedder(batch)
+                s_init = model_module.s_init(s_inputs)
+                z_init = (
+                    model_module.z_init_1(s_inputs)[:, :, None]
+                    + model_module.z_init_2(s_inputs)[:, None, :]
+                )
+                relative_position_encoding = model_module.rel_pos(batch)
+                z_init = z_init + relative_position_encoding
+                z_init = z_init + model_module.token_bonds(batch["token_bonds"].float())
+                if hasattr(model_module, 'bond_type_feature') and model_module.bond_type_feature:
+                    z_init = z_init + model_module.token_bonds_type(batch["type_bonds"].long())
+                z_init = z_init + model_module.contact_conditioning(batch)
+
+                s = torch.zeros_like(s_init)
+                z = torch.zeros_like(z_init)
+                mask = batch["token_pad_mask"].float()
+                pair_mask = mask[:, :, None] * mask[:, None, :]
+
+                for i in range(recycling_steps + 1):
+                    s = s_init + model_module.s_recycle(model_module.s_norm(s))
+                    z = z_init + model_module.z_recycle(model_module.z_norm(z))
+                    if hasattr(model_module, 'use_templates') and model_module.use_templates:
+                        template_module = model_module.template_module
+                        if hasattr(template_module, '_orig_mod'):
+                            template_module = template_module._orig_mod
+                        z = z + template_module(
+                            z, batch, pair_mask, use_kernels=getattr(model_module, 'use_kernels', False)
+                        )
+                    msa_module = model_module.msa_module
+                    if hasattr(msa_module, '_orig_mod'):
+                        msa_module = msa_module._orig_mod
+                    z = z + msa_module(
+                        z, s_inputs, batch, use_kernels=getattr(model_module, 'use_kernels', False)
+                    )
+                    pairformer_module = model_module.pairformer_module
+                    if hasattr(pairformer_module, '_orig_mod'):
+                        pairformer_module = pairformer_module._orig_mod
+                    s, z = pairformer_module(
+                        s, z, mask=mask, pair_mask=pair_mask,
+                        use_kernels=getattr(model_module, 'use_kernels', False),
+                    )
+
+                # Distogram (beta-independent)
+                pdistogram = model_module.distogram_module(z)
+
+            click.echo("Trunk complete.")
+
+            # ============================================================
+            # SWEEP: For each beta, run diffusion_conditioning + sampling + confidence
+            # ============================================================
+            all_results = []
+            for beta_idx, beta_val in enumerate(beta_values):
+                click.echo(f"  Beta {beta_idx+1}/{beta_steps}: beta={beta_val:.3f}")
+                batch["cdr3_beta_value"] = torch.tensor(beta_val, device=model_device, dtype=torch.float32)
+
+                with torch.no_grad():
+                    # Diffusion conditioning (applies z *= (1+beta) on CDR regions)
+                    q, c, to_keys, atom_enc_bias, atom_dec_bias, token_trans_bias = (
+                        model_module.diffusion_conditioning(
+                            s_trunk=s,
+                            z_trunk=z,
+                            relative_position_encoding=relative_position_encoding,
+                            feats=batch,
+                        )
+                    )
+                    diffusion_conditioning = {
+                        'q': q, 'c': c, 'to_keys': to_keys,
+                        'atom_enc_bias': atom_enc_bias,
+                        'atom_dec_bias': atom_dec_bias,
+                        'token_trans_bias': token_trans_bias,
+                    }
+
+                    # Structure module sampling
+                    with torch.autocast("cuda", enabled=False):
+                        struct_out = model_module.structure_module.sample(
+                            s_trunk=s.float(),
+                            s_inputs=s_inputs.float(),
+                            feats=batch,
+                            num_sampling_steps=sampling_steps,
+                            atom_mask=batch["atom_pad_mask"].float(),
+                            multiplicity=diffusion_samples,
+                            max_parallel_samples=max_parallel_samples,
+                            steering_args=getattr(model_module, 'steering_args', None),
+                            diffusion_conditioning=diffusion_conditioning,
+                        )
+
+                    x_pred = struct_out['sample_atom_coords']
+
+                    # Confidence module
+                    confidence_out = model_module.confidence_module(
+                        s_inputs=s_inputs.detach(),
+                        s=s.detach(),
+                        z=z.detach(),
+                        x_pred=x_pred.detach(),
+                        feats=batch,
+                        pred_distogram_logits=pdistogram[:, :, :, 0].detach(),
+                        multiplicity=diffusion_samples,
+                        run_sequentially=True,
+                        use_kernels=getattr(model_module, 'use_kernels', False),
+                    )
+
+                # Store results on CPU
+                num_samples = x_pred.shape[0] if len(x_pred.shape) == 3 else 1
+                for sample_idx in range(num_samples):
+                    coords_sample = x_pred[sample_idx].cpu() if num_samples > 1 else x_pred.squeeze(0).cpu()
+
+                    # Compute confidence score
+                    complex_plddt = confidence_out.get('complex_plddt', torch.zeros(1))
+                    iptm = confidence_out.get('iptm', torch.zeros(1))
+                    ptm = confidence_out.get('ptm', torch.zeros(1))
+                    if torch.is_tensor(iptm) and not torch.allclose(iptm, torch.zeros_like(iptm)):
+                        tm_score = iptm
+                    else:
+                        tm_score = ptm
+
+                    if complex_plddt.numel() > sample_idx:
+                        c_plddt = complex_plddt[sample_idx].item() if complex_plddt.dim() > 0 else complex_plddt.item()
+                    else:
+                        c_plddt = complex_plddt.item()
+                    if tm_score.numel() > sample_idx:
+                        t_val = tm_score[sample_idx].item() if tm_score.dim() > 0 else tm_score.item()
+                    else:
+                        t_val = tm_score.item()
+
+                    conf_score = (4 * c_plddt + t_val) / 5
+
+                    # Extract per-sample confidence metrics
+                    conf_dict = {'beta': float(beta_val), 'confidence_score': conf_score}
+                    for key in ["ptm", "iptm", "ligand_iptm", "protein_iptm",
+                                "complex_plddt", "complex_iplddt", "complex_pde", "complex_ipde"]:
+                        if key in confidence_out:
+                            val = confidence_out[key]
+                            if torch.is_tensor(val):
+                                if val.numel() > sample_idx:
+                                    conf_dict[key] = val[sample_idx].item() if val.dim() > 0 else val.item()
+                                else:
+                                    conf_dict[key] = val.item()
+
+                    plddt_sample = None
+                    if 'plddt' in confidence_out:
+                        plddt_tensor = confidence_out['plddt']
+                        if plddt_tensor.dim() > 1 and plddt_tensor.shape[0] > sample_idx:
+                            plddt_sample = plddt_tensor[sample_idx].cpu()
+                        elif plddt_tensor.dim() == 1:
+                            plddt_sample = plddt_tensor.cpu()
+
+                    # Handle pair_chains_iptm
+                    if "pair_chains_iptm" in confidence_out:
+                        pair_iptm = confidence_out["pair_chains_iptm"]
+                        conf_dict["chains_ptm"] = {
+                            str(idx): pair_iptm[idx][idx][sample_idx].item()
+                            if pair_iptm[idx][idx].numel() > sample_idx
+                            else pair_iptm[idx][idx].item()
+                            for idx in pair_iptm
+                        }
+                        conf_dict["pair_chains_iptm"] = {
+                            str(idx1): {
+                                str(idx2): pair_iptm[idx1][idx2][sample_idx].item()
+                                if pair_iptm[idx1][idx2].numel() > sample_idx
+                                else pair_iptm[idx1][idx2].item()
+                                for idx2 in pair_iptm[idx1]
+                            }
+                            for idx1 in pair_iptm
+                        }
+
+                    all_results.append({
+                        'coords': coords_sample,
+                        'confidence_score': conf_score,
+                        'confidence_dict': conf_dict,
+                        'plddt': plddt_sample,
+                        'beta': float(beta_val),
+                    })
+
+            # ============================================================
+            # SELECT TOP-K and WRITE OUTPUT
+            # ============================================================
+            all_results.sort(key=lambda x: x['confidence_score'], reverse=True)
+            selected = all_results[:top_k]
+
+            click.echo(f"\nTop-{top_k} results:")
+            for rank, res in enumerate(selected):
+                click.echo(
+                    f"  Rank {rank}: beta={res['beta']:.3f}, "
+                    f"confidence={res['confidence_score']:.4f}"
+                )
+
+            # Write output files
+            struct_dir = out_dir / "predictions" / record.id
+            struct_dir.mkdir(parents=True, exist_ok=True)
+
+            # Load structure for coordinate writing
+            structure_path = processed.targets_dir / f"{record.id}.npz"
+            structure: StructureV2 = StructureV2.load(structure_path)
+            chain_map = {}
+            for i, msk in enumerate(structure.mask):
+                if msk:
+                    chain_map[len(chain_map)] = i
+            structure = structure.remove_invalid_chains()
+
+            pad_mask = batch["atom_pad_mask"][0] if batch["atom_pad_mask"].dim() > 1 else batch["atom_pad_mask"]
+
+            for rank, res in enumerate(selected):
+                model_coord = res['coords']
+                coord_unpad = model_coord[pad_mask.bool().cpu()]
+                coord_unpad_np = coord_unpad.numpy()
+
+                # Build structure
+                atoms = structure.atoms.copy()
+                atoms["coords"] = coord_unpad_np
+                atoms["is_present"] = True
+                coord_unpad_typed = [(x,) for x in coord_unpad_np]
+                coord_unpad_typed = np.array(coord_unpad_typed, dtype=Coords)
+
+                residues = structure.residues.copy()
+                residues["is_present"] = True
+                interfaces = np.array([], dtype=Interface)
+                new_structure = dc_replace(
+                    structure,
+                    atoms=atoms,
+                    residues=residues,
+                    interfaces=interfaces,
+                    coords=coord_unpad_typed,
+                )
+
+                outname = f"{record.id}_model_{rank}"
+                plddts = res['plddt']
+
+                if output_format == "pdb":
+                    path = struct_dir / f"{outname}.pdb"
+                    with path.open("w") as f:
+                        f.write(to_pdb(new_structure, plddts=plddts, boltz2=(model == "boltz2")))
+                else:
+                    path = struct_dir / f"{outname}.cif"
+                    with path.open("w") as f:
+                        f.write(to_mmcif(new_structure, plddts=plddts, boltz2=(model == "boltz2")))
+
+                # Write confidence JSON
+                conf_path = struct_dir / f"confidence_{record.id}_model_{rank}.json"
+                with conf_path.open("w") as f:
+                    f.write(json.dumps(res['confidence_dict'], indent=4))
+
+                # Write plddt
+                if plddts is not None:
+                    plddt_path = struct_dir / f"plddt_{record.id}_model_{rank}.npz"
+                    plddt_np = plddts.numpy() if torch.is_tensor(plddts) else plddts
+                    np.savez_compressed(plddt_path, plddt=plddt_np)
+
+            click.echo(f"\nCanonical ensemble results written to {struct_dir}")
         else:
             # Compute structure predictions using normal forward pass
             trainer.predict(

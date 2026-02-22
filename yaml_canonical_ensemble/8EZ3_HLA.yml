@@ -1,0 +1,38 @@
+sequences:
+- protein:
+    id: A
+    sequence: AEYRNWSKPQCNITGFAPFSKDNSIRLSAGGDIWVTREPYVSCDPDKCYQFALGQGTTLNNGHSNDTVHDRTPYRTLLMNELGVPFHLGTKQVCIAWSSSSCHDGKAWLHVCVTGDDENATASFIYNGRLVDSIGSWSKKILRTQESECVCINGTCTVVMTDGSASGKADTKILFIEEGKIVHTSPLSGSAQHVEECSCYPRYPGVRCVCRDNWKGSNRPIVDINVKDYSIVSSYVCSGLVGDTPRKNDSSSSSHCLDPNNEEGGHGVKGWAFDDGNDVWMGRTISEKLRSGYETFKVIEGWSKPNSKLQINRQVIVDRGNRSGYSGIFSVEGKSCINRCFYVELIRGRKQETEVLWTSNSIVVFCGTSGTYGTGSWPDGADINLMPI
+    msa: examples/msa_antigen_cut_new/antigen_8EZ3_HLA.a3m
+- protein:
+    id: B
+    sequence: QVQLQESGPGLVRPSQTLSLTCTVSGASISDVDFYWTWFRQTPGKGLEWIGYTNSIGNAFYNPSLQSRLTISIDTSDNHFSLRLKSVTAADTAVYYCARSNSNTWSREYFQHWGQGTLVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: SVLTQPPSVSGAPGQRVSISCTGSSSNIGAGFDVHWYQQVPGTAPKLLIYGNSNRPSGVPDRFSASKSGTSASLAITGLQPEDEADYYCQSYDNSLSVNYVFGTGTRVTVL
+    msa: empty
+constraints:
+  - canonical_ensemble:
+      cdr_regions:
+        - chain: B
+          start_res: 26
+          end_res: 35
+        - chain: B
+          start_res: 53
+          end_res: 59
+        - chain: B
+          start_res: 98
+          end_res: 112
+        - chain: C
+          start_res: 25
+          end_res: 33
+        - chain: C
+          start_res: 51
+          end_res: 53
+        - chain: C
+          start_res: 90
+          end_res: 101
+      beta_min: -0.5
+      beta_max: 0.5
+      beta_steps: 11
+      top_k: 5

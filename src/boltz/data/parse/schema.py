@@ -1515,6 +1515,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
     cdr3_constraints = []
     antigen_orientation_constraints = []
     cdr3_beta_constraints = []
+    canonical_ensemble_params = None
     constraints = schema.get("constraints", [])
     for constraint in constraints:
         if "bond" in constraint:
@@ -1701,6 +1702,38 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
 
             # Store constraint
             cdr3_beta_constraints.append((beta_value, cdr_regions))
+        elif "canonical_ensemble" in constraint:
+            ce_data = constraint["canonical_ensemble"]
+            if "cdr_regions" not in ce_data:
+                msg = "canonical_ensemble constraint requires cdr_regions"
+                raise ValueError(msg)
+
+            # Parse CDR regions (same format as cdr3_beta_scaling)
+            cdr_regions = []
+            for cdr_region in ce_data["cdr_regions"]:
+                if "chain" not in cdr_region or "start_res" not in cdr_region or "end_res" not in cdr_region:
+                    msg = "Each cdr_region requires chain, start_res, and end_res"
+                    raise ValueError(msg)
+
+                cdr_chain_name = cdr_region["chain"]
+                if cdr_chain_name not in chain_to_idx:
+                    msg = f"CDR chain {cdr_chain_name} not found in input!"
+                    raise ValueError(msg)
+
+                cdr_chain_id = chain_to_idx[cdr_chain_name]
+                cdr_start = cdr_region["start_res"] - 1  # Convert to 0-indexed
+                cdr_end = cdr_region["end_res"] - 1  # Convert to 0-indexed
+                cdr_regions.append((cdr_chain_id, cdr_start, cdr_end))
+
+            # Store CDR regions in existing cdr3_beta_constraints with beta=0.0 placeholder
+            cdr3_beta_constraints.append((0.0, cdr_regions))
+
+            # Parse sweep params
+            beta_min = ce_data.get("beta_min", -0.5)
+            beta_max = ce_data.get("beta_max", 0.5)
+            beta_steps = ce_data.get("beta_steps", 11)
+            top_k = ce_data.get("top_k", 5)
+            canonical_ensemble_params = (beta_min, beta_max, beta_steps, top_k)
         else:
             msg = f"Invalid constraint: {constraint}"
             raise ValueError(msg)
@@ -1918,6 +1951,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
         cdr3_constraints=cdr3_constraints if cdr3_constraints else None,
         antigen_orientation_constraints=antigen_orientation_constraints if antigen_orientation_constraints else None,
         cdr3_beta_constraints=cdr3_beta_constraints if cdr3_beta_constraints else None,
+        canonical_ensemble_params=canonical_ensemble_params,
     )
     record = Record(
         id=name,

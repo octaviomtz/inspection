@@ -1,0 +1,38 @@
+sequences:
+- protein:
+    id: A
+    sequence: PPTFSPALLVVTEGDNATFTCSFSNTSESFVLNWYRMSPSNQTDKLAAFPEDRSQPGQDSRFRVTQLPNGRDFHMSVVRARRNDSGTYLCGAISLAPKAQIKESLRAELRVTER
+    msa: examples/msa_antigen_cut_new/antigen_8EQ6_HLA.a3m
+- protein:
+    id: B
+    sequence: QVQLVQSGAEVKKPGASVKVSCKAFGYTFTTYPIEWMRQAPGKGLEWIGNFHPYNDDTKYNEKFQGRVTLTVDKSSTTVYMELSSLRSEDTAVYYCARENYGSHGGFVYWGQGTLVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: ENQLTQSPSSLSASVGDRVTITCRASSSVISSYLHWYQQKPGKAPKLLIYSTSNLASGVPSRFSGSGSGTDYTLTISSLQPEDFATYYCQQYNSYPLTFGGGTKLEIK
+    msa: empty
+constraints:
+  - canonical_ensemble:
+      cdr_regions:
+        - chain: B
+          start_res: 26
+          end_res: 33
+        - chain: B
+          start_res: 51
+          end_res: 58
+        - chain: B
+          start_res: 97
+          end_res: 109
+        - chain: C
+          start_res: 27
+          end_res: 33
+        - chain: C
+          start_res: 51
+          end_res: 53
+        - chain: C
+          start_res: 90
+          end_res: 98
+      beta_min: -0.5
+      beta_max: 0.5
+      beta_steps: 11
+      top_k: 5

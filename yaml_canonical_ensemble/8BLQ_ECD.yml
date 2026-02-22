@@ -1,0 +1,38 @@
+sequences:
+- protein:
+    id: A
+    sequence: PPSTALRELIEELVNITQNQKAPLCNGSMVWSINLTAGMYCAALESLINVSGCSAIEKTQRMLSGFCPHKVSAGQFSSLHVRDTKIEVAQFVKDLLLHLKKLFREGQFN
+    msa: examples/msa_antigen_cut_new/antigen_8BLQ_ECD.a3m
+- protein:
+    id: B
+    sequence: VQLVQSGAEVKKPGASVKVSCKASGYTFTNYGLSWVRQAPGQGLEWMGWISANNGDTNYGQEFQGRVTMTTDTSTSTAYMELRSLRSDDTAVYYCARDSSSSWARWFFDLWGRGTLVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: YVLTQPPSVSVAPGKTARITCGGNIIGSKLVHWYQQKPGQAPVLVIYDDGDRPSGIPERFSGSNSGNTATLTISRVEAGDEADYYCQVWDTGSDPVVFGGGTKLTVL
+    msa: empty
+constraints:
+  - canonical_ensemble:
+      cdr_regions:
+        - chain: B
+          start_res: 25
+          end_res: 32
+        - chain: B
+          start_res: 50
+          end_res: 57
+        - chain: B
+          start_res: 96
+          end_res: 110
+        - chain: C
+          start_res: 25
+          end_res: 30
+        - chain: C
+          start_res: 48
+          end_res: 50
+        - chain: C
+          start_res: 87
+          end_res: 97
+      beta_min: -0.5
+      beta_max: 0.5
+      beta_steps: 11
+      top_k: 5

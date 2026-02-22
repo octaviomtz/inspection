@@ -543,6 +543,8 @@ class InferenceOptions:
     cdr3_beta_constraints: Optional[
         list[tuple[float, list[tuple[int, int, int]]]]
     ] = None
+    # Canonical ensemble params: (beta_min, beta_max, beta_steps, top_k)
+    canonical_ensemble_params: Optional[tuple[float, float, int, int]] = None
 
 
 @dataclass(frozen=True)
