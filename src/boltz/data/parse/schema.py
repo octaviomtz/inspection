@@ -1514,6 +1514,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
     contact_constraints = []
     cdr3_constraints = []
     antigen_orientation_constraints = []
+    cdr3_beta_constraints = []
     constraints = schema.get("constraints", [])
     for constraint in constraints:
         if "bond" in constraint:
@@ -1666,6 +1667,40 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
 
             force = antigen_data.get("force", True)
             antigen_orientation_constraints.append((antigen_chain_id, contact_threshold, cdr_regions, force))
+        elif "cdr3_beta_scaling" in constraint:
+            if not boltz_2:
+                msg = "CDR3 beta scaling constraint is not supported in Boltz-1!"
+                raise ValueError(msg)
+
+            beta_data = constraint["cdr3_beta_scaling"]
+
+            # Validate required fields
+            if "cdr3_regions" not in beta_data:
+                msg = "cdr3_beta_scaling constraint requires cdr3_regions"
+                raise ValueError(msg)
+
+            # Extract beta value (default 0.0 = no scaling)
+            beta_value = beta_data.get("beta", 0.0)
+
+            # Parse CDR3 regions (same format as antigen_orientation)
+            cdr_regions = []
+            for cdr_region in beta_data["cdr3_regions"]:
+                if "chain" not in cdr_region or "start_res" not in cdr_region or "end_res" not in cdr_region:
+                    msg = "Each cdr3_region requires chain, start_res, and end_res"
+                    raise ValueError(msg)
+
+                cdr_chain_name = cdr_region["chain"]
+                if cdr_chain_name not in chain_to_idx:
+                    msg = f"CDR chain {cdr_chain_name} not found in input!"
+                    raise ValueError(msg)
+
+                cdr_chain_id = chain_to_idx[cdr_chain_name]
+                cdr_start = cdr_region["start_res"] - 1  # Convert to 0-indexed
+                cdr_end = cdr_region["end_res"] - 1  # Convert to 0-indexed
+                cdr_regions.append((cdr_chain_id, cdr_start, cdr_end))
+
+            # Store constraint
+            cdr3_beta_constraints.append((beta_value, cdr_regions))
         else:
             msg = f"Invalid constraint: {constraint}"
             raise ValueError(msg)
@@ -1882,6 +1917,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
         contact_constraints=contact_constraints,
         cdr3_constraints=cdr3_constraints if cdr3_constraints else None,
         antigen_orientation_constraints=antigen_orientation_constraints if antigen_orientation_constraints else None,
+        cdr3_beta_constraints=cdr3_beta_constraints if cdr3_beta_constraints else None,
     )
     record = Record(
         id=name,

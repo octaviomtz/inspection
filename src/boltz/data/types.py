@@ -538,6 +538,11 @@ class InferenceOptions:
     antigen_orientation_constraints: Optional[
         list[tuple[int, float, list[tuple[int, int, int]], bool]]
     ] = None
+    # CDR3 beta scaling constraints: (beta_value, cdr_regions)
+    # cdr_regions is a list of (chain_id, start_res, end_res) tuples
+    cdr3_beta_constraints: Optional[
+        list[tuple[float, list[tuple[int, int, int]]]]
+    ] = None
 
 
 @dataclass(frozen=True)

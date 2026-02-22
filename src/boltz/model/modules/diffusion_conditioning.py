@@ -92,6 +92,31 @@ class DiffusionConditioning(Module):
             relative_position_encoding,
         )
 
+        # Apply CDR3 beta scaling if enabled
+        if "cdr3_token_mask" in feats and "cdr3_beta_value" in feats:
+            cdr3_mask = feats["cdr3_token_mask"].to(z.device).to(torch.bool)
+            cdr3_beta = feats["cdr3_beta_value"].to(z.device)
+            beta_val = float(cdr3_beta.item())
+
+            # cdr3_mask might have batch dimension [batch, n_tokens] or just [n_tokens]
+            if cdr3_mask.dim() == 2:
+                # Remove batch dimension
+                cdr3_mask = cdr3_mask.squeeze(0)
+
+            if abs(beta_val) > 1e-6:  # Only apply if non-zero
+                # Create pair mask: True for (i,j) where both i and j are in CDR3
+                # cdr3_mask shape: [n_tokens], z shape: [batch, n_tokens, n_tokens, tz]
+                cdr3_mask_i = cdr3_mask.unsqueeze(-1)  # [n_tokens, 1]
+                cdr3_mask_j = cdr3_mask.unsqueeze(-2)  # [1, n_tokens]
+                cdr3_pair_mask = (cdr3_mask_i & cdr3_mask_j)  # [n_tokens, n_tokens]
+
+                # Apply scaling: z[CDR3] *= (1 + beta)
+                # Add batch and feature dimensions for broadcasting: [1, n_tokens, n_tokens, 1]
+                scaling_tensor = cdr3_pair_mask.unsqueeze(0).unsqueeze(-1).float()
+                scaling_factor = 1.0 + beta_val * scaling_tensor
+
+                z = z * scaling_factor
+
         q, c, p, to_keys = self.atom_encoder(
             feats=feats,
             s_trunk=s_trunk,  # Float['b n ts'],
