@@ -2381,8 +2381,7 @@ def process_asymmetric_beta_constraints(
         - beta_l: scalar tensor for L3 scaling factor
     """
     token_data = data.tokens
-    structure = data.structure
-    n_atoms = structure["atom_to_token"].shape[0]
+    n_atoms = data.structure.atoms.shape[0]
 
     h3_atom_mask = torch.zeros(n_atoms, dtype=torch.bool)
     l3_atom_mask = torch.zeros(n_atoms, dtype=torch.bool)
