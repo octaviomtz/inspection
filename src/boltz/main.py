@@ -174,6 +174,7 @@ class BoltzSteeringParams:
     contact_guidance_update: bool = True
     cdr3_steering: bool = False
     antigen_steering: bool = False
+    epitope_scanning: bool = False
     num_gd_steps: int = 20
 
 
@@ -1010,6 +1011,12 @@ def cli() -> None:
          "With steering enabled, total samples = diffusion_samples × num_particles. Default is 3.",
 )
 @click.option(
+    "--epitope_scanning",
+    is_flag=True,
+    help="Enable blind epitope scanning mode. Systematically probes antigen surface regions "
+         "using region-specific CDR-antigen beta-scaling. Requires blind_scanning constraint in YAML.",
+)
+@click.option(
     "--model",
     default="boltz2",
     type=click.Choice(["boltz1", "boltz2"]),
@@ -1115,6 +1122,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     cdr3_steering: bool = False,
     antigen_steering: bool = False,
     num_particles: int = 3,
+    epitope_scanning: bool = False,
     model: Literal["boltz1", "boltz2"] = "boltz2",
     method: Optional[str] = None,
     affinity_mw_correction: Optional[bool] = False,
@@ -1359,6 +1367,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         steering_args.physical_guidance_update = use_potentials
         steering_args.cdr3_steering = cdr3_steering
         steering_args.antigen_steering = antigen_steering
+        steering_args.epitope_scanning = epitope_scanning
         steering_args.num_particles = num_particles
 
         # Validate CDR3 steering requires potentials

@@ -21,6 +21,12 @@ from boltz.data import const
 from boltz.data.mol import (
     minimum_lddt_symmetry_coords,
 )
+from boltz.model.blind_scanning import (
+    partition_antigen_sequence,
+    build_region_pair_masks,
+    compute_contacts_from_coords,
+    aggregate_contacts,
+)
 from boltz.model.layers.pairformer import PairformerModule
 from boltz.model.loss.bfactor import bfactor_loss_fn
 from boltz.model.loss.confidencev2 import (
@@ -1074,6 +1080,15 @@ class Boltz2(LightningModule):
                 validator.on_epoch_end(model=self)
 
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> dict:
+        # Dispatch to blind scanning if enabled
+        if (
+            self.steering_args
+            and self.steering_args.get("epitope_scanning", False)
+            and "blind_scan_enabled" in batch
+            and batch["blind_scan_enabled"].any()
+        ):
+            return self.predict_step_blind_scanning(batch, batch_idx)
+
         try:
             out = self(
                 batch,
@@ -1142,6 +1157,235 @@ class Boltz2(LightningModule):
         except RuntimeError as e:  # catch out of memory exceptions
             if "out of memory" in str(e):
                 print("| WARNING: ran out of memory, skipping batch")
+                torch.cuda.empty_cache()
+                gc.collect()
+                return {"exception": True}
+            else:
+                raise e
+
+    def predict_step_blind_scanning(self, batch: Any, batch_idx: int) -> dict:
+        """Run blind scanning epitope mapping.
+
+        Computes trunk once, then loops over antigen regions with
+        region-specific β-scaling to build an epitope propensity heatmap.
+        """
+        try:
+            feats = batch
+            recycling_steps = self.predict_args["recycling_steps"]
+            num_sampling_steps = self.predict_args["sampling_steps"]
+            diffusion_samples = self.predict_args.get("diffusion_samples", 1)
+
+            # Extract blind scanning parameters
+            cdr_mask = feats["blind_scan_cdr_token_mask"].squeeze(0).to(self.device).bool()
+            antigen_mask = feats["blind_scan_antigen_token_mask"].squeeze(0).to(self.device).bool()
+            antigen_indices = feats["blind_scan_antigen_token_indices"].squeeze(0).to(self.device)
+            num_regions = int(feats["blind_scan_num_regions"].item())
+            beta_emphasis = float(feats["blind_scan_beta_emphasis"].item())
+            beta_deemphasis = float(feats["blind_scan_beta_deemphasis"].item())
+            contact_threshold = float(feats["blind_scan_contact_threshold"].item())
+
+            # ---- TRUNK COMPUTATION (done once) ----
+            with torch.set_grad_enabled(False):
+                s_inputs = self.input_embedder(feats)
+                s_init = self.s_init(s_inputs)
+                z_init = (
+                    self.z_init_1(s_inputs)[:, :, None]
+                    + self.z_init_2(s_inputs)[:, None, :]
+                )
+                relative_position_encoding = self.rel_pos(feats)
+                z_init = z_init + relative_position_encoding
+                z_init = z_init + self.token_bonds(feats["token_bonds"].float())
+                if self.bond_type_feature:
+                    z_init = z_init + self.token_bonds_type(feats["type_bonds"].long())
+                z_init = z_init + self.contact_conditioning(feats)
+
+                s = torch.zeros_like(s_init)
+                z = torch.zeros_like(z_init)
+
+                mask = feats["token_pad_mask"].float()
+                pair_mask = mask[:, :, None] * mask[:, None, :]
+
+                for i in range(recycling_steps + 1):
+                    s = s_init + self.s_recycle(self.s_norm(s))
+                    z = z_init + self.z_recycle(self.z_norm(z))
+
+                    if self.use_templates:
+                        if self.is_template_compiled and not self.training:
+                            template_module = self.template_module._orig_mod  # noqa: SLF001
+                        else:
+                            template_module = self.template_module
+                        z = z + template_module(
+                            z, feats, pair_mask, use_kernels=self.use_kernels
+                        )
+
+                    if self.is_msa_compiled and not self.training:
+                        msa_module = self.msa_module._orig_mod  # noqa: SLF001
+                    else:
+                        msa_module = self.msa_module
+
+                    z = z + msa_module(
+                        z, s_inputs, feats, use_kernels=self.use_kernels
+                    )
+
+                    if self.is_pairformer_compiled and not self.training:
+                        pairformer_module = self.pairformer_module._orig_mod  # noqa: SLF001
+                    else:
+                        pairformer_module = self.pairformer_module
+
+                    s, z = pairformer_module(
+                        s, z, mask=mask, pair_mask=pair_mask,
+                        use_kernels=self.use_kernels,
+                    )
+
+            # ---- PARTITION ANTIGEN INTO REGIONS ----
+            regions = partition_antigen_sequence(antigen_indices, num_regions)
+            n_tokens = cdr_mask.shape[0]
+            n_antigen = int(antigen_mask.sum().item())
+
+            all_contacts = []
+            per_region_contacts = []
+
+            # ---- LOOP OVER REGIONS ----
+            for region_idx, region_indices in enumerate(regions):
+                print(f"  Blind scan region {region_idx + 1}/{len(regions)}")  # noqa: T201
+
+                # Build region pair masks
+                emph_mask, deemph_mask = build_region_pair_masks(
+                    cdr_mask, region_indices, antigen_mask, n_tokens
+                )
+
+                # Inject masks into a shallow copy of feats
+                region_feats = dict(feats)
+                region_feats["blind_scan_region_pair_mask"] = emph_mask
+                region_feats["blind_scan_region_beta"] = torch.tensor([beta_emphasis], device=self.device)
+                region_feats["blind_scan_deemph_pair_mask"] = deemph_mask
+                region_feats["blind_scan_deemph_beta"] = torch.tensor([beta_deemphasis], device=self.device)
+
+                # Run diffusion conditioning with region-specific β-scaling
+                with torch.set_grad_enabled(False):
+                    q, c, to_keys, atom_enc_bias, atom_dec_bias, token_trans_bias = (
+                        self.diffusion_conditioning(
+                            s_trunk=s,
+                            z_trunk=z,
+                            relative_position_encoding=relative_position_encoding,
+                            feats=region_feats,
+                        )
+                    )
+                    diffusion_conditioning = {
+                        "q": q,
+                        "c": c,
+                        "to_keys": to_keys,
+                        "atom_enc_bias": atom_enc_bias,
+                        "atom_dec_bias": atom_dec_bias,
+                        "token_trans_bias": token_trans_bias,
+                    }
+
+                    # Run structure module sampling
+                    with torch.autocast("cuda", enabled=False):
+                        struct_out = self.structure_module.sample(
+                            s_trunk=s.float(),
+                            s_inputs=s_inputs.float(),
+                            feats=region_feats,
+                            num_sampling_steps=num_sampling_steps,
+                            atom_mask=feats["atom_pad_mask"].float(),
+                            multiplicity=1,  # Single sample per region for speed
+                            max_parallel_samples=1,
+                            steering_args=self.steering_args,
+                            diffusion_conditioning=diffusion_conditioning,
+                        )
+
+                    # Extract predicted coordinates (token-level)
+                    # sample_atom_coords: [multiplicity, N_atoms, 3]
+                    pred_coords = struct_out["sample_atom_coords"][0]  # [N_atoms, 3]
+
+                    # We need token-level coordinates. Use atom_token_index to map atoms to tokens.
+                    # Take first atom per token as representative (C-alpha)
+                    token_pad_mask = feats["token_pad_mask"].squeeze(0).bool()
+                    atom_token_idx = feats["atom_token_index"].squeeze(0)
+                    n_tok = int(token_pad_mask.sum().item())
+                    token_coords = torch.zeros(n_tok, 3, device=pred_coords.device)
+                    token_counts = torch.zeros(n_tok, device=pred_coords.device)
+                    for atom_i in range(pred_coords.shape[0]):
+                        tok_i = int(atom_token_idx[atom_i].item())
+                        if tok_i < n_tok:
+                            token_coords[tok_i] += pred_coords[atom_i]
+                            token_counts[tok_i] += 1
+                    # Average atom coords per token
+                    valid = token_counts > 0
+                    token_coords[valid] = token_coords[valid] / token_counts[valid].unsqueeze(-1)
+
+                    # Compute contacts
+                    contacts = compute_contacts_from_coords(
+                        token_coords, cdr_mask[:n_tok], antigen_mask[:n_tok], contact_threshold
+                    )
+                    all_contacts.append(contacts)
+                    per_region_contacts.append(contacts.cpu())
+
+            # ---- AGGREGATE INTO HEATMAP ----
+            epitope_propensity = aggregate_contacts(all_contacts, n_antigen)
+
+            # Also do one normal prediction for structure output
+            out = self(
+                batch,
+                recycling_steps=recycling_steps,
+                num_sampling_steps=num_sampling_steps,
+                diffusion_samples=diffusion_samples,
+                max_parallel_samples=self.predict_args.get("max_parallel_samples"),
+                run_confidence_sequentially=True,
+            )
+
+            pred_dict = {"exception": False}
+            if "keys_dict_batch" in self.predict_args:
+                for key in self.predict_args["keys_dict_batch"]:
+                    pred_dict[key] = batch[key]
+
+            pred_dict["masks"] = batch["atom_pad_mask"]
+            pred_dict["token_masks"] = batch["token_pad_mask"]
+            pred_dict["s"] = out["s"]
+            pred_dict["z"] = out["z"]
+
+            if "keys_dict_out" in self.predict_args:
+                for key in self.predict_args["keys_dict_out"]:
+                    pred_dict[key] = out[key]
+            pred_dict["coords"] = out["sample_atom_coords"]
+
+            if self.confidence_prediction:
+                pred_dict["pde"] = out["pde"]
+                pred_dict["plddt"] = out["plddt"]
+                pred_dict["confidence_score"] = (
+                    4 * out["complex_plddt"]
+                    + (
+                        out["iptm"]
+                        if not torch.allclose(
+                            out["iptm"], torch.zeros_like(out["iptm"])
+                        )
+                        else out["ptm"]
+                    )
+                ) / 5
+                pred_dict["complex_plddt"] = out["complex_plddt"]
+                pred_dict["complex_iplddt"] = out["complex_iplddt"]
+                pred_dict["complex_pde"] = out["complex_pde"]
+                pred_dict["complex_ipde"] = out["complex_ipde"]
+                if self.alpha_pae > 0:
+                    pred_dict["pae"] = out["pae"]
+                    pred_dict["ptm"] = out["ptm"]
+                    pred_dict["iptm"] = out["iptm"]
+                    pred_dict["ligand_iptm"] = out["ligand_iptm"]
+                    pred_dict["protein_iptm"] = out["protein_iptm"]
+                    pred_dict["pair_chains_iptm"] = out["pair_chains_iptm"]
+
+            # Attach blind scanning results
+            pred_dict["blind_scan_epitope_heatmap"] = {
+                "epitope_propensity": epitope_propensity.cpu(),
+                "antigen_token_indices": antigen_indices.cpu(),
+                "per_region_contacts": per_region_contacts,
+            }
+
+            return pred_dict
+
+        except RuntimeError as e:
+            if "out of memory" in str(e):
+                print("| WARNING: ran out of memory during blind scanning, skipping batch")  # noqa: T201
                 torch.cuda.empty_cache()
                 gc.collect()
                 return {"exception": True}

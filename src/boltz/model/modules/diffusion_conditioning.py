@@ -117,6 +117,38 @@ class DiffusionConditioning(Module):
 
                 z = z * scaling_factor
 
+        # Apply blind scanning region-specific beta scaling if injected
+        if "blind_scan_region_pair_mask" in feats and "blind_scan_region_beta" in feats:
+            region_mask = feats["blind_scan_region_pair_mask"].to(z.device).to(torch.bool)
+            region_beta = float(feats["blind_scan_region_beta"].item())
+
+            if region_mask.dim() == 2:
+                # [n_tokens, n_tokens] -> add batch and feature dims
+                scaling_tensor = region_mask.unsqueeze(0).unsqueeze(-1).float()
+            elif region_mask.dim() == 3:
+                scaling_tensor = region_mask.unsqueeze(-1).float()
+            else:
+                scaling_tensor = region_mask.float()
+
+            if abs(region_beta) > 1e-6:
+                scaling_factor = 1.0 + region_beta * scaling_tensor
+                z = z * scaling_factor
+
+        if "blind_scan_deemph_pair_mask" in feats and "blind_scan_deemph_beta" in feats:
+            deemph_mask = feats["blind_scan_deemph_pair_mask"].to(z.device).to(torch.bool)
+            deemph_beta = float(feats["blind_scan_deemph_beta"].item())
+
+            if deemph_mask.dim() == 2:
+                scaling_tensor = deemph_mask.unsqueeze(0).unsqueeze(-1).float()
+            elif deemph_mask.dim() == 3:
+                scaling_tensor = deemph_mask.unsqueeze(-1).float()
+            else:
+                scaling_tensor = deemph_mask.float()
+
+            if abs(deemph_beta) > 1e-6:
+                scaling_factor = 1.0 + deemph_beta * scaling_tensor
+                z = z * scaling_factor
+
         q, c, p, to_keys = self.atom_encoder(
             feats=feats,
             s_trunk=s_trunk,  # Float['b n ts'],

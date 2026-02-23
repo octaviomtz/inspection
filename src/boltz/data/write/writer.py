@@ -257,6 +257,21 @@ class BoltzWriter(BasePredictionWriter):
                 )
                 np.savez_compressed(path, s=s, z=z)
 
+            # Save blind scanning epitope heatmap
+            if "blind_scan_epitope_heatmap" in prediction:
+                heatmap_data = prediction["blind_scan_epitope_heatmap"]
+                path = (
+                    struct_dir
+                    / f"epitope_heatmap_{record.id}.npz"
+                )
+                per_region = torch.stack(heatmap_data["per_region_contacts"], dim=0).numpy()
+                np.savez_compressed(
+                    path,
+                    epitope_propensity=heatmap_data["epitope_propensity"].numpy(),
+                    antigen_token_indices=heatmap_data["antigen_token_indices"].numpy(),
+                    per_region_contacts=per_region,
+                )
+
     def on_predict_epoch_end(
         self,
         trainer: Trainer,  # noqa: ARG002

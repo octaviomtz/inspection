@@ -2403,6 +2403,74 @@ def process_cdr3_beta_constraints(
     }
 
 
+def process_blind_scanning_constraints(
+    data: Tokenized,
+    inference_blind_scanning_constraints: list[tuple[int, list[tuple[int, int, int]], int, float, float, float]],
+):
+    """Process blind scanning constraints.
+
+    Creates feature tensors for blind epitope scanning.
+
+    Parameters
+    ----------
+    data : Tokenized
+        The tokenized input data.
+    inference_blind_scanning_constraints : list
+        List of blind scanning constraints. Each tuple contains:
+        (antigen_chain_id, cdr_regions, num_regions, beta_emphasis, beta_deemphasis, contact_threshold)
+
+    Returns
+    -------
+    dict
+        Dictionary containing masks and parameters for blind scanning.
+    """
+    token_data = data.tokens
+    num_tokens = len(token_data)
+
+    if not inference_blind_scanning_constraints:
+        return {
+            "blind_scan_enabled": torch.tensor([False], dtype=torch.bool),
+        }
+
+    # Use the first constraint
+    antigen_chain_id, cdr_regions, num_regions, beta_emphasis, beta_deemphasis, contact_threshold = inference_blind_scanning_constraints[0]
+
+    # Create CDR token mask
+    cdr_token_mask = torch.zeros(num_tokens, dtype=torch.bool)
+    for cdr_chain_id, start_res, end_res in cdr_regions:
+        for idx, token in enumerate(token_data):
+            if (
+                token["asym_id"] == cdr_chain_id
+                and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+                and start_res <= token["res_idx"] <= end_res
+            ):
+                cdr_token_mask[idx] = True
+
+    # Create antigen token mask and collect antigen token indices
+    antigen_token_mask = torch.zeros(num_tokens, dtype=torch.bool)
+    antigen_token_indices = []
+    for idx, token in enumerate(token_data):
+        if (
+            token["asym_id"] == antigen_chain_id
+            and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+        ):
+            antigen_token_mask[idx] = True
+            antigen_token_indices.append(idx)
+
+    antigen_token_indices = torch.tensor(antigen_token_indices, dtype=torch.long)
+
+    return {
+        "blind_scan_cdr_token_mask": cdr_token_mask,
+        "blind_scan_antigen_token_mask": antigen_token_mask,
+        "blind_scan_antigen_token_indices": antigen_token_indices,
+        "blind_scan_num_regions": torch.tensor([num_regions], dtype=torch.long),
+        "blind_scan_beta_emphasis": torch.tensor([beta_emphasis], dtype=torch.float32),
+        "blind_scan_beta_deemphasis": torch.tensor([beta_deemphasis], dtype=torch.float32),
+        "blind_scan_contact_threshold": torch.tensor([contact_threshold], dtype=torch.float32),
+        "blind_scan_enabled": torch.tensor([True], dtype=torch.bool),
+    }
+
+
 class Boltz2Featurizer:
     """Boltz2 featurizer."""
 
@@ -2454,6 +2522,9 @@ class Boltz2Featurizer:
         ] = None,
         inference_cdr3_beta_constraints: Optional[
             list[tuple[float, list[tuple[int, int, int]]]]
+        ] = None,
+        inference_blind_scanning_constraints: Optional[
+            list[tuple[int, list[tuple[int, int, int]], int, float, float, float]]
         ] = None,
         compute_affinity: bool = False,
     ) -> dict[str, Tensor]:
@@ -2609,6 +2680,11 @@ class Boltz2Featurizer:
                 inference_cdr3_beta_constraints=inference_cdr3_beta_constraints if inference_cdr3_beta_constraints else [],
             )
 
+        blind_scanning_features = process_blind_scanning_constraints(
+            data=data,
+            inference_blind_scanning_constraints=inference_blind_scanning_constraints if inference_blind_scanning_constraints else [],
+        )
+
         return {
             **token_features,
             **atom_features,
@@ -2623,5 +2699,6 @@ class Boltz2Featurizer:
             **cdr3_constraint_features,
             **antigen_orientation_constraint_features,
             **cdr3_beta_constraint_features,
+            **blind_scanning_features,
             **ligand_to_mw,
         }

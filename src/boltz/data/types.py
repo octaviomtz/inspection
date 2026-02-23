@@ -543,6 +543,11 @@ class InferenceOptions:
     cdr3_beta_constraints: Optional[
         list[tuple[float, list[tuple[int, int, int]]]]
     ] = None
+    # Blind scanning constraints: (antigen_chain_id, cdr_regions, num_regions, beta_emphasis, beta_deemphasis, contact_threshold)
+    # cdr_regions is a list of (chain_id, start_res, end_res) tuples
+    blind_scanning_constraints: Optional[
+        list[tuple[int, list[tuple[int, int, int]], int, float, float, float]]
+    ] = None
 
 
 @dataclass(frozen=True)
