@@ -1,0 +1,28 @@
+sequences:
+- protein:
+    id: A
+    sequence: NLCPFGEVFNATRFASVYAWNRKRISNCVADYSVLYNSASFSTFKCYGVSPTKLNDLCFTNVYADSFVIRGDEVRQIAPGQTGKIADYNYKLPDDFTGCVIAWNSNNLDSKVGGNYNYLYRLFRKSNLKPFERDISTEIYQAGSTPCNGVEGFNCYFPLQSYGFQPTNGVGYQPYRVVVLSFELLHAPATVCGP
+    msa: examples/msa_antigen_cut_new/antigen_8HGM_CDB.a3m
+- protein:
+    id: B
+    sequence: QLVQSGPEVKKPGTSVKVSCKASGFTFYYSAVQWVRQARGQRLEWLGWMAVGSGKANYAQKFQERLTLTRDMSTSTAYMELSSLRSEDTAVYYCAAPNCTGGSCYDGFNLWGQGTVVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: EIVLTQSPGTLSLSPGDRAILSCRASQTVNSNYLAWYQQKPGQAPRLLIYGTSSRATGIPDRFSGSGSGTDFTLTISRLEPEDFAVYYCQQYGSSPWLFGQGTKVEIK
+    msa: empty
+
+constraints:
+  - blind_scanning:
+      antigen_chain: A
+      cdr_regions:
+        - chain: B
+          start_res: 95
+          end_res: 110
+        - chain: C
+          start_res: 90
+          end_res: 98
+      num_regions: 10
+      region_beta_emphasis: 0.5
+      region_beta_deemphasis: -0.3
+      contact_threshold: 8.0

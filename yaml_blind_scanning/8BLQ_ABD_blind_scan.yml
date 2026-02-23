@@ -1,0 +1,28 @@
+sequences:
+- protein:
+    id: A
+    sequence: PPSTALRELIEELVNITQNQKAPLCNGSMVWSINLTAGMYCAALESLINVSGCSAIEKTQRMLSGFCPHKVSAGQFSSLHVRDTKIEVAQFVKDLLLHLKKLFREGQFN
+    msa: examples/msa_antigen_cut_new/antigen_8BLQ_ABD.a3m
+- protein:
+    id: B
+    sequence: EVQLKESGPGLVAPGGSLSITCTVSGFSLTDSSINWVRQPPGKGLEWLGMIWGDGRIDYADALKSRLSISKDSSKSQVFLEMTSLRTDDTATYYCARDGYFPYAMDFWGQGTSVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: DIVLTQSPASLAVSLGQRATISCRASESVDSYGQSYMHWYQQKAGQPPKLLIYLASNLESGVPARFSGSGSRTDFTLTIDPVQAEDAATYYCQQNAEDSRTFGGGTKLEIK
+    msa: empty
+
+constraints:
+  - blind_scanning:
+      antigen_chain: A
+      cdr_regions:
+        - chain: B
+          start_res: 96
+          end_res: 107
+        - chain: C
+          start_res: 93
+          end_res: 101
+      num_regions: 10
+      region_beta_emphasis: 0.5
+      region_beta_deemphasis: -0.3
+      contact_threshold: 8.0

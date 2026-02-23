@@ -1,0 +1,28 @@
+sequences:
+- protein:
+    id: A
+    sequence: HHRWRQTWSGPGTTKRFPETVLARCVKYTEIHPEMRHVDCQSVWDAFKGAFISKHPCDITEEDYQPLMKLGTQTVPCNKILLWSRIKDLAHQFTQVQRDMFTLEDTLLGYLADDLTWCGEFATSKINYQSCPDWRKDCSNNPVSVFWKTVSRRFAEAACDVVHVMLDGSRSKIFDKDSTFGSVEVHNLQPEKVQTLEAWVIHGGREDSRDLCQDPTIKELESIISKRNIQFSCKNIYRPDKFLQCVKNP
+    msa: examples/msa_antigen_cut_new/antigen_8BYU_HLA.a3m
+- protein:
+    id: B
+    sequence: QVQLVQSGAEVKKPGSSVKVSCKAFGGTFSSYAISWVRQAPGQGLEWMGRIIRFLGIANYAQKFQGRVTLIADKSTNTAYMELSSLRSEDTAVYYCAGEPGERDPDAVDIWGQGTMVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: DIQMTQSPSSLSASVGDRVTITCRASQGIRSWLAWYQQKPEKAPKSLIYAASSLQSGVPSRFSGSGSGTDFTLTISSLQPEDFATYYCQQYNSYPLTFGGGTKVEIK
+    msa: empty
+
+constraints:
+  - blind_scanning:
+      antigen_chain: A
+      cdr_regions:
+        - chain: B
+          start_res: 97
+          end_res: 110
+        - chain: C
+          start_res: 89
+          end_res: 97
+      num_regions: 10
+      region_beta_emphasis: 0.5
+      region_beta_deemphasis: -0.3
+      contact_threshold: 8.0
