@@ -1298,21 +1298,14 @@ class Boltz2(LightningModule):
                     # sample_atom_coords: [multiplicity, N_atoms, 3]
                     pred_coords = struct_out["sample_atom_coords"][0]  # [N_atoms, 3]
 
-                    # We need token-level coordinates. Use atom_token_index to map atoms to tokens.
-                    # Take first atom per token as representative (C-alpha)
-                    token_pad_mask = feats["token_pad_mask"].squeeze(0).bool()
-                    atom_token_idx = feats["atom_token_index"].squeeze(0)
-                    n_tok = int(token_pad_mask.sum().item())
-                    token_coords = torch.zeros(n_tok, 3, device=pred_coords.device)
-                    token_counts = torch.zeros(n_tok, device=pred_coords.device)
-                    for atom_i in range(pred_coords.shape[0]):
-                        tok_i = int(atom_token_idx[atom_i].item())
-                        if tok_i < n_tok:
-                            token_coords[tok_i] += pred_coords[atom_i]
-                            token_counts[tok_i] += 1
-                    # Average atom coords per token
-                    valid = token_counts > 0
-                    token_coords[valid] = token_coords[valid] / token_counts[valid].unsqueeze(-1)
+                    # Map tokens to their center atom coords using token_to_center_atom (one-hot)
+                    # token_to_center_atom: [batch, N_tokens, N_atoms] one-hot
+                    center_atom_onehot = feats["token_to_center_atom"].squeeze(0)  # [N_tokens, N_atoms]
+                    center_atom_idx = center_atom_onehot.argmax(dim=-1)  # [N_tokens]
+                    n_tok = center_atom_idx.shape[0]
+                    # Clamp to valid atom range
+                    center_atom_idx = center_atom_idx.clamp(0, pred_coords.shape[0] - 1)
+                    token_coords = pred_coords[center_atom_idx]  # [N_tokens, 3]
 
                     # Compute contacts
                     contacts = compute_contacts_from_coords(
