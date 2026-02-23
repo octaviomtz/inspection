@@ -117,6 +117,44 @@ class DiffusionConditioning(Module):
 
                 z = z * scaling_factor
 
+        # Apply embedding-space CDR3 steering if enabled
+        if "embedding_steering_mask" in feats:
+            steer_mask = feats["embedding_steering_mask"].to(z.device).to(torch.bool)
+            strength = float(feats["embedding_steering_strength"].to(z.device).item())
+            num_opt_steps = int(feats["embedding_steering_num_opt_steps"].to(z.device).item())
+            mode = int(feats["embedding_steering_mode"].to(z.device).item())
+
+            # Handle batch dimension
+            if steer_mask.dim() == 2:
+                steer_mask = steer_mask.squeeze(0)
+
+            if steer_mask.any() and num_opt_steps > 0 and abs(strength) > 1e-6:
+                # Create pair masks
+                # steer_mask shape: [n_tokens], z shape: [batch, n_tokens, n_tokens, tz]
+                mask_i = steer_mask.unsqueeze(-1)  # [n_tokens, 1]
+                mask_j = steer_mask.unsqueeze(-2)  # [1, n_tokens]
+                cdr3_pair_mask = (mask_i & mask_j)  # [n_tokens, n_tokens]
+                non_cdr3_pair_mask = (~mask_i & ~mask_j)  # [n_tokens, n_tokens]
+
+                # Broadcast masks to z shape: [1, n_tokens, n_tokens, 1]
+                cdr3_pair_mask_4d = cdr3_pair_mask.unsqueeze(0).unsqueeze(-1).float()
+                non_cdr3_pair_mask_4d = non_cdr3_pair_mask.unsqueeze(0).unsqueeze(-1).float()
+
+                if mode == 0:  # self_reference
+                    # Compute target: mean of non-CDR3 valid pairs
+                    non_cdr3_count = non_cdr3_pair_mask_4d.sum()
+                    if non_cdr3_count > 0:
+                        z_target = (z * non_cdr3_pair_mask_4d).sum(dim=(1, 2), keepdim=True) / non_cdr3_count.clamp(min=1.0)
+                    else:
+                        z_target = z.mean(dim=(1, 2), keepdim=True)
+
+                    # Gradient descent with analytical gradient and decreasing learning rate
+                    for step in range(num_opt_steps):
+                        lr = strength * 0.1 * (1.0 - step / num_opt_steps)
+                        # Analytical gradient of ||z_cdr3 - z_target||^2: 2 * (z_cdr3 - z_target)
+                        grad = 2.0 * (z - z_target) * cdr3_pair_mask_4d
+                        z = z - lr * grad
+
         q, c, p, to_keys = self.atom_encoder(
             feats=feats,
             s_trunk=s_trunk,  # Float['b n ts'],

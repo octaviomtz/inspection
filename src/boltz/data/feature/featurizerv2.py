@@ -2403,6 +2403,64 @@ def process_cdr3_beta_constraints(
     }
 
 
+def process_embedding_steering_constraints(
+    data: Tokenized,
+    inference_embedding_steering_constraints: list[tuple[str, float, int, list[tuple[int, int, int]]]],
+) -> dict[str, Tensor]:
+    """Process embedding-space CDR3 steering constraints.
+
+    Creates token mask and steering parameters for embedding-space optimization
+    of CDR3 pair representations in diffusion conditioning.
+
+    Parameters
+    ----------
+    data : Tokenized
+        The tokenized input data.
+    inference_embedding_steering_constraints : list
+        List of (mode, strength, num_opt_steps, cdr_regions) tuples.
+
+    Returns
+    -------
+    dict[str, Tensor]
+        embedding_steering_mask: boolean token mask for CDR3 residues
+        embedding_steering_strength: scalar strength multiplier
+        embedding_steering_num_opt_steps: number of optimization steps
+        embedding_steering_mode: integer mode (0=self_reference)
+
+    """
+    token_data = data.tokens
+    num_tokens = len(token_data)
+
+    # Create mask for CDR3 tokens
+    steering_mask = torch.zeros(num_tokens, dtype=torch.bool)
+    strength = 1.0
+    num_opt_steps = 10
+    mode_int = 0  # 0 = self_reference
+
+    mode_map = {"self_reference": 0}
+
+    for mode, s, n, cdr_regions in inference_embedding_steering_constraints:
+        strength = s
+        num_opt_steps = n
+        mode_int = mode_map.get(mode, 0)
+
+        for cdr_chain_id, start_res, end_res in cdr_regions:
+            for idx, token in enumerate(token_data):
+                if (
+                    token["asym_id"] == cdr_chain_id
+                    and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+                    and start_res <= token["res_idx"] <= end_res
+                ):
+                    steering_mask[idx] = True
+
+    return {
+        "embedding_steering_mask": steering_mask,
+        "embedding_steering_strength": torch.tensor([strength], dtype=torch.float32),
+        "embedding_steering_num_opt_steps": torch.tensor([num_opt_steps], dtype=torch.int64),
+        "embedding_steering_mode": torch.tensor([mode_int], dtype=torch.int64),
+    }
+
+
 class Boltz2Featurizer:
     """Boltz2 featurizer."""
 
@@ -2454,6 +2512,9 @@ class Boltz2Featurizer:
         ] = None,
         inference_cdr3_beta_constraints: Optional[
             list[tuple[float, list[tuple[int, int, int]]]]
+        ] = None,
+        inference_embedding_steering_constraints: Optional[
+            list[tuple[str, float, int, list[tuple[int, int, int]]]]
         ] = None,
         compute_affinity: bool = False,
     ) -> dict[str, Tensor]:
@@ -2588,6 +2649,7 @@ class Boltz2Featurizer:
         cdr3_constraint_features = {}
         antigen_orientation_constraint_features = {}
         cdr3_beta_constraint_features = {}
+        embedding_steering_constraint_features = {}
         if compute_constraint_features:
             residue_constraint_features = process_residue_constraint_features(data)
             chain_constraint_features = process_chain_feature_constraints(data)
@@ -2608,6 +2670,10 @@ class Boltz2Featurizer:
                 data=data,
                 inference_cdr3_beta_constraints=inference_cdr3_beta_constraints if inference_cdr3_beta_constraints else [],
             )
+            embedding_steering_constraint_features = process_embedding_steering_constraints(
+                data=data,
+                inference_embedding_steering_constraints=inference_embedding_steering_constraints if inference_embedding_steering_constraints else [],
+            )
 
         return {
             **token_features,
@@ -2623,5 +2689,6 @@ class Boltz2Featurizer:
             **cdr3_constraint_features,
             **antigen_orientation_constraint_features,
             **cdr3_beta_constraint_features,
+            **embedding_steering_constraint_features,
             **ligand_to_mw,
         }

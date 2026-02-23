@@ -1,0 +1,26 @@
+sequences:
+- protein:
+    id: A
+    sequence: NLCPFGEVFNATRFASVYAWNRKRISNCVADYSVLYNSASFSTFKCYGVSPTKLNDLCFTNVYADSFVIRGDEVRQIAPGQTGKIADYNYKLPDDFTGCVIAWNSNNLDSKVGGNYNYLYRLFRKSNLKPFERDISTEIYQAGSTPCNGVEGFNCYFPLQSYGFQPTNGVGYQPYRVVVLSFELLHAPATVCGP
+    msa: examples/msa_antigen_cut_new/antigen_7Y0O_HLA.a3m
+- protein:
+    id: B
+    sequence: QMQLVQSGAEVKKPGASVKVSCKASGYTFTSYAISWVRQAPGQGLEWMGRIIPILGIANYAQKFQGRVTITADESTSTAYMELSSRSEDTAVYYCASGAFYYGSGSYPFDYWGQGT
+    msa: empty
+- protein:
+    id: C
+    sequence: DIQLTQSPSSLSASVGDRVTITCRASQDISDYLNWYQQKPGKAPKLLIYAASSLQSGVPSRFSGSGSGTDFTLTISNLQPEDFATYYCQQSYSAPRTFGQGTKVEIK
+    msa: empty
+
+constraints:
+  - embedding_steering:
+      mode: self_reference
+      strength: 1.0
+      num_opt_steps: 10
+      cdr3_regions:
+        - chain: B
+          start_res: 96
+          end_res: 111
+        - chain: C
+          start_res: 89
+          end_res: 97

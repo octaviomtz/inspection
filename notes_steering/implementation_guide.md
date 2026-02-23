@@ -746,5 +746,115 @@ class SteeringConfig:
 
 ---
 
+---
+
+## Part 8: Strategy V - Embedding-Space CDR3 Steering (EmbedOpt-Inspired)
+
+### Overview
+
+Strategy V steers CDR3 loop conformations by optimizing the Pairformer's pair representation `z` in embedding space, rather than applying coordinate-space potentials (like the existing `CDR3ConformationPotential`). Inspired by the EmbedOpt paper (Li et al., 2602.05285).
+
+**Key Advantages**:
+- More robust for novel CDR sequences not in training data
+- Stable across 2 orders of magnitude of hyperparameter variation (vs. brittle coordinate methods)
+- Captures biological signals more naturally in learned representation space
+- Does NOT require `--use_potentials` (operates in embedding space, not coordinate space)
+- Compatible with existing `--cdr3_steering` and `--antigen_steering`
+
+### Integration Point
+
+**Location**: `src/boltz/model/modules/diffusion_conditioning.py`, in the `DiffusionConditioning.forward()` method, after CDR3 beta scaling (line ~118) and before `atom_encoder` call (line ~120).
+
+This is where the pair representation `z` is available and modifiable before it's projected into biases for the atom encoder/decoder and token transformer.
+
+### Mechanism
+
+1. Extract CDR3 pair mask from `feats["embedding_steering_mask"]`
+2. Compute target embedding:
+   - `self_reference` mode: mean of non-CDR3 valid pairs (pushes CDR3 toward well-ordered patterns learned by the model)
+3. Run N gradient descent steps with analytical gradient:
+   - Loss: `||z_cdr3 - z_target||^2`
+   - Gradient: `2 * (z_cdr3 - z_target)` (closed-form, no autograd needed)
+   - Learning rate schedule: `strength * 0.1 * (1 - step/N)` (decreasing)
+4. Modified `z` flows into `atom_encoder` and `token_trans_bias`, affecting all 200 denoising steps
+
+### Code Changes Needed
+
+#### 1. `src/boltz/data/types.py` (~line 545)
+Add `embedding_steering_constraints` field to `InferenceOptions`:
+```python
+embedding_steering_constraints: Optional[
+    list[tuple[str, float, int, list[tuple[int, int, int]]]]
+] = None
+```
+Format: `(mode, strength, num_opt_steps, [(chain_id, start_res, end_res), ...])`
+
+#### 2. `src/boltz/data/parse/schema.py` (~line 1670)
+Add `embedding_steering` constraint parsing alongside existing `cdr3_beta_scaling`:
+- Initialize `embedding_steering_constraints = []` at ~line 1517
+- Add `elif "embedding_steering" in constraint:` block
+- Parse: mode, strength, num_opt_steps, cdr3_regions
+- Pass to `InferenceOptions` constructor at ~line 1920
+
+#### 3. `src/boltz/data/feature/featurizerv2.py` (~line 2403)
+Add `process_embedding_steering_constraints()` function:
+- Creates `embedding_steering_mask` (boolean token mask for CDR3 residues)
+- Creates `embedding_steering_strength` (scalar)
+- Creates `embedding_steering_num_opt_steps` (scalar)
+- Creates `embedding_steering_mode` (integer: 0=self_reference)
+
+Update `Boltz2Featurizer.process()`:
+- Add `inference_embedding_steering_constraints` parameter
+- Call `process_embedding_steering_constraints()` and merge into return dict
+
+#### 4. `src/boltz/data/module/inferencev2.py` (~line 264)
+Unpack `embedding_steering_constraints` from `options` and pass to featurizer.
+
+#### 5. `src/boltz/main.py`
+- Add `embedding_steering: bool = False` to `BoltzSteeringParams` (~line 175)
+- Add `--embedding_steering` CLI flag (~line 1003)
+- Add to predict function signature and steering_args setup
+
+#### 6. `src/boltz/model/modules/diffusion_conditioning.py` (THE CORE CHANGE)
+Insert embedding-space optimization after existing CDR3 beta scaling (line 118) and before `atom_encoder` call (line 120).
+
+### YAML Constraint Format
+
+```yaml
+constraints:
+  - embedding_steering:
+      mode: self_reference     # self_reference | canonical
+      strength: 1.0            # gradient step size multiplier
+      num_opt_steps: 10        # number of optimization steps
+      cdr3_regions:
+        - chain: B
+          start_res: 97
+          end_res: 115
+        - chain: C
+          start_res: 88
+          end_res: 100
+```
+
+### Key Design Decisions
+
+1. **Standalone flag**: `--embedding_steering` does NOT require `--use_potentials`
+2. **Analytical gradients**: Closed-form MSE gradient avoids torch.autograd overhead during inference
+3. **Decreasing learning rate**: `lr = strength * 0.1 * (1 - step/N)` ensures convergence
+4. **Self-reference target**: Uses mean of non-CDR3 well-ordered pairs as target, leveraging the model's learned representations
+
+### Testing
+
+```bash
+# Embedding steering on 7TRH_HBG
+conda activate boltz
+boltz predict examples/7TRH/7TRH_HBG_embedding_steer.yml \
+    --embedding_steering --out_dir ./output_embed_steer --recycling_steps 3 --sampling_steps 50
+
+# Baseline comparison
+boltz predict examples/7TRH/7TRH_HBG.yml --out_dir ./output_baseline --recycling_steps 3 --sampling_steps 50
+```
+
+---
+
 **Status**: Ready for implementation
-**Last Updated**: 2025-02-09
+**Last Updated**: 2025-02-23

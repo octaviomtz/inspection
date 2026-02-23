@@ -1,0 +1,26 @@
+sequences:
+- protein:
+    id: A
+    sequence: NLCPFDEVFNATRFASVYAWNRKRISNCVADYSVLYNFAPFFAFKCYGVSPTKLNDLCFTNVYADSFVIRGNEVSQIAPGQTGNIADYNYKLPDDFTGCVIAWNSNKLDSKVGGNYNYRYRLFRKSNLKPFERDISTEIYQAGNKPCNGVAGVNCYFPLQSYGFRPTYGVGHQPYRVVVLSFELLHAPATVCGP
+    msa: examples/msa_antigen_cut_new/antigen_8J1T_HKF.a3m
+- protein:
+    id: B
+    sequence: VQLVESGGGLVQPGGSLRLSCAASGLTVSSNYMNWVRQAPGKGLEWVSVFYPGGSTFYADSVRGRFTISRDNSKNTLYLQMNSLRAEDTAVYYCARDHSGHALDIWGQGTMVTVS
+    msa: empty
+- protein:
+    id: C
+    sequence: DIQMTQSPSFLSASVGDRVTITCRASQGISSYLAWYQQKPGKAPKLLIYAASTLQSGVPSRFSGSGSGTEFTLTISSLQPEDFATYYCQHLNSYPSMYTFGQGTKVDI
+    msa: empty
+
+constraints:
+  - embedding_steering:
+      mode: self_reference
+      strength: 1.0
+      num_opt_steps: 10
+      cdr3_regions:
+        - chain: B
+          start_res: 95
+          end_res: 105
+        - chain: C
+          start_res: 89
+          end_res: 99

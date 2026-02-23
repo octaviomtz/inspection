@@ -543,6 +543,12 @@ class InferenceOptions:
     cdr3_beta_constraints: Optional[
         list[tuple[float, list[tuple[int, int, int]]]]
     ] = None
+    # Embedding-space CDR3 steering constraints: (mode, strength, num_opt_steps, cdr_regions)
+    # mode is one of: "self_reference"
+    # cdr_regions is a list of (chain_id, start_res, end_res) tuples
+    embedding_steering_constraints: Optional[
+        list[tuple[str, float, int, list[tuple[int, int, int]]]]
+    ] = None
 
 
 @dataclass(frozen=True)

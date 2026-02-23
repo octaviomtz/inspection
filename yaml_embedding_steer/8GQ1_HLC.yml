@@ -1,0 +1,26 @@
+sequences:
+- protein:
+    id: A
+    sequence: KVFGRCELAAAMKRHGLDNYRGYSLGNWVCAAKFESNFNTQATNRNTDGSTDYGILQINSRWWCNDGRTPGSRNLCNIPCSALLSSDITASVNCAKKIVSDGNGMNAWVAWRNRCKGTDVQAWIRGCR
+    msa: examples/msa_antigen_cut_new/antigen_8GQ1_HLC.a3m
+- protein:
+    id: B
+    sequence: DVQLQESGPSLVKPSQTLSLTCSVTGDSITSDYWSWIRKFPGNRLEYMGYVSYSGSTYYNPSLKSRISITRDTSKNQYYLDLNSVTTEDTATYYCANWDGDYWGQGTLVTVSA
+    msa: empty
+- protein:
+    id: C
+    sequence: DIVLTQSPATLSVTPGNSVSLSCRASQSIGNNLHWYQQKSHESPRLLIKYASQSISGIPSRFRGRGRGTRFRLSINSVETEDFGMYFCQQSNSWPYTFGGGTKLEIK
+    msa: empty
+
+constraints:
+  - embedding_steering:
+      mode: self_reference
+      strength: 1.0
+      num_opt_steps: 10
+      cdr3_regions:
+        - chain: B
+          start_res: 96
+          end_res: 102
+        - chain: C
+          start_res: 89
+          end_res: 97

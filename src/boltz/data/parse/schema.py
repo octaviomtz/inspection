@@ -1515,6 +1515,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
     cdr3_constraints = []
     antigen_orientation_constraints = []
     cdr3_beta_constraints = []
+    embedding_steering_constraints = []
     constraints = schema.get("constraints", [])
     for constraint in constraints:
         if "bond" in constraint:
@@ -1701,6 +1702,45 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
 
             # Store constraint
             cdr3_beta_constraints.append((beta_value, cdr_regions))
+        elif "embedding_steering" in constraint:
+            if not boltz_2:
+                msg = "Embedding steering constraint is not supported in Boltz-1!"
+                raise ValueError(msg)
+
+            embed_data = constraint["embedding_steering"]
+
+            # Validate required fields
+            if "cdr3_regions" not in embed_data:
+                msg = "embedding_steering constraint requires cdr3_regions"
+                raise ValueError(msg)
+
+            # Extract parameters
+            mode = embed_data.get("mode", "self_reference")
+            if mode not in ("self_reference",):
+                msg = f"Invalid embedding_steering mode: {mode}. Must be 'self_reference'."
+                raise ValueError(msg)
+
+            strength = float(embed_data.get("strength", 1.0))
+            num_opt_steps = int(embed_data.get("num_opt_steps", 10))
+
+            # Parse CDR3 regions
+            cdr_regions = []
+            for cdr_region in embed_data["cdr3_regions"]:
+                if "chain" not in cdr_region or "start_res" not in cdr_region or "end_res" not in cdr_region:
+                    msg = "Each cdr3_region requires chain, start_res, and end_res"
+                    raise ValueError(msg)
+
+                cdr_chain_name = cdr_region["chain"]
+                if cdr_chain_name not in chain_to_idx:
+                    msg = f"CDR chain {cdr_chain_name} not found in input!"
+                    raise ValueError(msg)
+
+                cdr_chain_id = chain_to_idx[cdr_chain_name]
+                cdr_start = cdr_region["start_res"] - 1  # Convert to 0-indexed
+                cdr_end = cdr_region["end_res"] - 1  # Convert to 0-indexed
+                cdr_regions.append((cdr_chain_id, cdr_start, cdr_end))
+
+            embedding_steering_constraints.append((mode, strength, num_opt_steps, cdr_regions))
         else:
             msg = f"Invalid constraint: {constraint}"
             raise ValueError(msg)
@@ -1918,6 +1958,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
         cdr3_constraints=cdr3_constraints if cdr3_constraints else None,
         antigen_orientation_constraints=antigen_orientation_constraints if antigen_orientation_constraints else None,
         cdr3_beta_constraints=cdr3_beta_constraints if cdr3_beta_constraints else None,
+        embedding_steering_constraints=embedding_steering_constraints if embedding_steering_constraints else None,
     )
     record = Record(
         id=name,

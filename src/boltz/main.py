@@ -174,6 +174,7 @@ class BoltzSteeringParams:
     contact_guidance_update: bool = True
     cdr3_steering: bool = False
     antigen_steering: bool = False
+    embedding_steering: bool = False
     num_gd_steps: int = 20
 
 
@@ -1003,6 +1004,13 @@ def cli() -> None:
          "Requires --use_potentials. Define using antigen_orientation constraints in YAML.",
 )
 @click.option(
+    "--embedding_steering",
+    is_flag=True,
+    help="Enable embedding-space CDR3 steering. Optimizes pair representations in the Pairformer's "
+         "embedding space to steer CDR3 conformations. Does NOT require --use_potentials. "
+         "Define CDR3 regions using embedding_steering constraints in YAML.",
+)
+@click.option(
     "--num_particles",
     type=int,
     default=3,
@@ -1114,6 +1122,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     use_potentials: bool = False,
     cdr3_steering: bool = False,
     antigen_steering: bool = False,
+    embedding_steering: bool = False,
     num_particles: int = 3,
     model: Literal["boltz1", "boltz2"] = "boltz2",
     method: Optional[str] = None,
@@ -1359,6 +1368,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         steering_args.physical_guidance_update = use_potentials
         steering_args.cdr3_steering = cdr3_steering
         steering_args.antigen_steering = antigen_steering
+        steering_args.embedding_steering = embedding_steering
         steering_args.num_particles = num_particles
 
         # Validate CDR3 steering requires potentials
