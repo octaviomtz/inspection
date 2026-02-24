@@ -559,6 +559,7 @@ class Boltz2(LightningModule):
                         max_parallel_samples=max_parallel_samples,
                         steering_args=self.steering_args,
                         diffusion_conditioning=diffusion_conditioning,
+                        z_trunk=z.float(),
                     )
                     dict_out.update(struct_out)
 

@@ -543,6 +543,11 @@ class InferenceOptions:
     cdr3_beta_constraints: Optional[
         list[tuple[float, list[tuple[int, int, int]]]]
     ] = None
+    # Embedding interface constraints: (antigen_chain_id, contact_threshold, cdr_regions, force)
+    # Uses pair embeddings to weight distance-based interface steering
+    embedding_interface_constraints: Optional[
+        list[tuple[int, float, list[tuple[int, int, int]], bool]]
+    ] = None
 
 
 @dataclass(frozen=True)

@@ -746,5 +746,52 @@ class SteeringConfig:
 
 ---
 
+---
+
+## Strategy W - Embedding-Based Interface Steering
+
+**Status**: Implemented
+**Date**: 2026-02-24
+
+**Concept**: Use the model's pair representation `z` (shape `[batch, N_tokens, N_tokens, token_z]`) to weight distance-based CDR-antigen interface steering. CDR-antigen token pairs with stronger pair embeddings get more steering force, capturing binding specificity rather than just proximity.
+
+**Files Modified**:
+
+1. **`src/boltz/data/types.py`**: Added `embedding_interface_constraints` field to `InferenceOptions`
+2. **`src/boltz/data/parse/schema.py`**: Added parsing for `embedding_interface` constraint in YAML
+3. **`src/boltz/data/feature/featurizerv2.py`**: Added `process_embedding_interface_constraints()` producing both token indices (for pair embedding lookup) and atom indices (for distance computation)
+4. **`src/boltz/model/potentials/potentials.py`**: New `EmbeddingInterfacePotential` class that weights distance potentials by pair embedding norms
+5. **`src/boltz/model/modules/diffusionv2.py`**: Extracts `z_trunk` from kwargs and calls `set_embedding_weights()` on potential
+6. **`src/boltz/model/models/boltz2.py`**: Passes `z_trunk=z.float()` to `structure_module.sample()`
+7. **`src/boltz/main.py`**: Added `--embedding_interface_steering` CLI flag
+8. **`src/boltz/data/module/inferencev2.py`**: Wired embedding_interface_constraints through to featurizer
+
+**YAML Format**:
+```yaml
+constraints:
+  - embedding_interface:
+      antigen_chain: A
+      contact_threshold: 8.0
+      cdr3_regions:
+        - chain: B
+          start_res: 97
+          end_res: 115
+        - chain: C
+          start_res: 88
+          end_res: 100
+      force: true
+```
+
+**CLI Usage**:
+```bash
+boltz predict example.yml --use_potentials --embedding_interface_steering
+```
+
+**Key Design Decisions**:
+- Pair embedding norms are computed once per diffusion trajectory (not per step), since `z` is fixed after trunk
+- Weights are normalized to [0, 1] range to act as multiplicative modifiers on spring constants
+- Same soft-min union_index grouping as AntigenOrientationPotential for per-antigen-residue minimum distance
+- `z_trunk` is popped from `network_condition_kwargs` before forwarding to score model to avoid signature mismatch
+
 **Status**: Ready for implementation
-**Last Updated**: 2025-02-09
+**Last Updated**: 2026-02-24

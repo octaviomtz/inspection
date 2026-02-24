@@ -32,7 +32,7 @@ from boltz.model.modules.utils import (
     default,
     log,
 )
-from boltz.model.potentials.potentials import get_potentials
+from boltz.model.potentials.potentials import get_potentials, EmbeddingInterfacePotential
 
 
 class DiffusionModule(Module):
@@ -301,12 +301,21 @@ class AtomDiffusion(Module):
         steering_args=None,
         **network_condition_kwargs,
     ):
+        # Extract z_trunk before it gets forwarded to the score model
+        z_trunk = network_condition_kwargs.pop("z_trunk", None)
+
         if steering_args is not None and (
             steering_args["fk_steering"]
             or steering_args["physical_guidance_update"]
             or steering_args["contact_guidance_update"]
         ):
             potentials = get_potentials(steering_args, boltz2=True)
+
+            # Set embedding weights for EmbeddingInterfacePotential if z_trunk is available
+            if z_trunk is not None:
+                for potential in potentials:
+                    if isinstance(potential, EmbeddingInterfacePotential):
+                        potential.set_embedding_weights(z_trunk, network_condition_kwargs["feats"])
 
         if steering_args["fk_steering"]:
             multiplicity = multiplicity * steering_args["num_particles"]

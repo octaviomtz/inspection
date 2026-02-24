@@ -799,6 +799,129 @@ class AntigenOrientationPotential(FlatBottomPotential, DistancePotential):
         )
 
 
+class EmbeddingInterfacePotential(FlatBottomPotential, DistancePotential):
+    """Potential that uses pair embeddings to weight distance-based interface steering.
+
+    Instead of treating all CDR-antigen pairs equally, this potential extracts
+    pair embedding norms from the model's pair representation z to weight the
+    distance-based contact potential. Pairs with stronger embeddings (higher norms)
+    get more steering force.
+
+    Features expected in feats:
+    - embedding_interface_antigen_atom_idx: [N_antigen] tensor of antigen CA atom indices
+    - embedding_interface_cdr_atom_idx: [N_cdr] tensor of CDR CA atom indices
+    - embedding_interface_antigen_token_idx: [N_antigen] tensor of antigen token indices
+    - embedding_interface_cdr_token_idx: [N_cdr] tensor of CDR token indices
+    - embedding_interface_threshold: scalar contact threshold (Angstrom)
+    """
+
+    def __init__(self, parameters):
+        super().__init__(parameters)
+        self._embedding_weights = None
+
+    def set_embedding_weights(self, z_trunk, feats):
+        """Extract CDR-antigen pair embedding norms as importance weights.
+
+        Parameters
+        ----------
+        z_trunk : Tensor
+            [batch, N_tokens, N_tokens, token_z] pair embeddings from trunk
+        feats : dict
+            Feature dictionary containing token indices
+        """
+        if "embedding_interface_antigen_token_idx" not in feats:
+            self._embedding_weights = None
+            return
+
+        ag_idx = feats["embedding_interface_antigen_token_idx"][0]  # [N_ag]
+        cdr_idx = feats["embedding_interface_cdr_token_idx"][0]     # [N_cdr]
+
+        if ag_idx.shape[0] == 0 or cdr_idx.shape[0] == 0:
+            self._embedding_weights = None
+            return
+
+        # Extract CDR-antigen sub-matrix from pair embeddings
+        # z_trunk: [batch, N_tokens, N_tokens, token_z]
+        # We want z[batch, ag_i, cdr_j, :] for all ag_i, cdr_j pairs
+        z_ag = z_trunk[:, ag_idx]            # [batch, N_ag, N_tokens, token_z]
+        z_interface = z_ag[:, :, cdr_idx]    # [batch, N_ag, N_cdr, token_z]
+
+        # Compute embedding norms as importance weights: [N_ag, N_cdr]
+        weights = z_interface.norm(dim=-1).mean(dim=0)  # average over batch
+
+        # Normalize to [0, 1] range
+        w_min = weights.min()
+        w_max = weights.max()
+        weights = (weights - w_min) / (w_max - w_min + 1e-8)
+
+        # Flatten to match pair ordering (antigen_i, cdr_j)
+        self._embedding_weights = weights.flatten()  # [N_ag * N_cdr]
+
+    def compute_args(self, feats, parameters):
+        """Extract antigen and CDR atom indices and compute pair indices.
+
+        Same pair construction as AntigenOrientationPotential but with
+        spring constants weighted by pair embedding magnitudes.
+        """
+        device = feats["atom_pad_mask"].device
+
+        if "embedding_interface_antigen_atom_idx" not in feats:
+            return torch.empty([2, 0], dtype=torch.long, device=device), (
+                torch.empty([0], dtype=torch.float32, device=device),
+                None,
+                None,
+            ), None, None, None
+
+        antigen_atom_index = feats["embedding_interface_antigen_atom_idx"][0]  # [N_antigen]
+        cdr_atom_index = feats["embedding_interface_cdr_atom_idx"][0]  # [N_cdr]
+
+        if antigen_atom_index.shape[0] == 0 or cdr_atom_index.shape[0] == 0:
+            return torch.empty([2, 0], dtype=torch.long, device=device), (
+                torch.empty([0], dtype=torch.float32, device=device),
+                None,
+                None,
+            ), None, None, None
+
+        # Get contact threshold
+        threshold = feats["embedding_interface_threshold"][0].item()
+
+        # Create pair indices: all antigen-CDR pairs
+        n_antigen = antigen_atom_index.shape[0]
+        n_cdr = cdr_atom_index.shape[0]
+
+        antigen_expanded = antigen_atom_index.unsqueeze(1).expand(-1, n_cdr).flatten()
+        cdr_expanded = cdr_atom_index.unsqueeze(0).expand(n_antigen, -1).flatten()
+
+        pair_index = torch.stack([antigen_expanded, cdr_expanded], dim=0)  # [2, N_antigen * N_cdr]
+
+        # Union index groups pairs by antigen atom for soft-min computation
+        union_index = torch.arange(n_antigen, device=device).unsqueeze(1).expand(-1, n_cdr).flatten()
+
+        # Upper bounds = contact_threshold for all pairs
+        upper_bounds = torch.full(
+            (pair_index.shape[1],), threshold, dtype=torch.float32, device=device
+        )
+        lower_bounds = None
+
+        # Spring constant weighted by embedding magnitudes
+        k = torch.ones_like(upper_bounds)
+        if self._embedding_weights is not None:
+            embed_w = self._embedding_weights.to(device)
+            if embed_w.shape[0] == k.shape[0]:
+                k = k * embed_w
+
+        # No negation (we want distance < threshold)
+        negation_mask = torch.zeros(pair_index.shape[1], dtype=torch.bool, device=device)
+
+        return (
+            pair_index,
+            (k, lower_bounds, upper_bounds),
+            None,
+            None,
+            (negation_mask, union_index),
+        )
+
+
 def get_potentials(steering_args, boltz2=False):
     potentials = []
     if steering_args["fk_steering"] or steering_args["physical_guidance_update"]:
@@ -938,6 +1061,26 @@ def get_potentials(steering_args, boltz2=False):
     if boltz2 and steering_args.get("antigen_steering", False):
         potentials.append(
             AntigenOrientationPotential(
+                parameters={
+                    "guidance_interval": 2,
+                    "guidance_weight": PiecewiseStepFunction(
+                        thresholds=[0.3, 0.7],
+                        values=[1.5, 1.0, 0.3]  # Strong early, weaker late
+                    ),
+                    "resampling_weight": PiecewiseStepFunction(
+                        thresholds=[0.5],
+                        values=[1.0, 0.5]  # Heavy resampling early
+                    ),
+                    "union_lambda": ExponentialInterpolation(
+                        start=8.0, end=0.0, alpha=-2.0
+                    ),
+                }
+            )
+        )
+    # Add embedding interface potential if enabled
+    if boltz2 and steering_args.get("embedding_interface_steering", False):
+        potentials.append(
+            EmbeddingInterfacePotential(
                 parameters={
                     "guidance_interval": 2,
                     "guidance_weight": PiecewiseStepFunction(

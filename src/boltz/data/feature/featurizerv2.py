@@ -2403,6 +2403,92 @@ def process_cdr3_beta_constraints(
     }
 
 
+def process_embedding_interface_constraints(
+    data: Tokenized,
+    inference_embedding_interface_constraints: list[tuple[int, float, list[tuple[int, int, int]], bool]],
+):
+    """Process embedding interface constraints.
+
+    Creates feature tensors for embedding-weighted CDR-antigen distance steering.
+    Uses token indices (for pair embedding lookup) AND atom indices (for distance computation).
+
+    Parameters
+    ----------
+    data : Tokenized
+        The tokenized input data.
+    inference_embedding_interface_constraints : list
+        List of embedding interface constraints. Each tuple contains:
+        (antigen_chain_id, contact_threshold, cdr_regions, force)
+        where cdr_regions is a list of (chain_id, start_res, end_res) tuples
+
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - embedding_interface_antigen_token_idx: [N_antigen] tensor of antigen token indices
+        - embedding_interface_cdr_token_idx: [N_cdr] tensor of CDR token indices
+        - embedding_interface_antigen_atom_idx: [N_antigen] tensor of antigen CA atom indices
+        - embedding_interface_cdr_atom_idx: [N_cdr] tensor of CDR CA atom indices
+        - embedding_interface_threshold: scalar contact threshold
+    """
+    token_data = data.tokens
+
+    antigen_token_indices = []
+    antigen_atom_indices = []
+    cdr_token_indices = []
+    cdr_atom_indices = []
+    threshold = 8.0  # default
+
+    for antigen_chain_id, contact_threshold, cdr_regions, force in inference_embedding_interface_constraints:
+        if not force:
+            continue
+
+        threshold = contact_threshold
+
+        # Find antigen tokens and CA atoms
+        for idx, token in enumerate(token_data):
+            if (
+                token["asym_id"] == antigen_chain_id
+                and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+            ):
+                antigen_token_indices.append(idx)
+                ca_idx = token["atom_idx"] + 1  # CA is at offset 1 (N=0, CA=1, C=2)
+                antigen_atom_indices.append(ca_idx)
+
+        # Find CDR tokens and CA atoms
+        for cdr_chain_id, start_res, end_res in cdr_regions:
+            for idx, token in enumerate(token_data):
+                if (
+                    token["asym_id"] == cdr_chain_id
+                    and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+                    and start_res <= token["res_idx"] <= end_res
+                ):
+                    cdr_token_indices.append(idx)
+                    ca_idx = token["atom_idx"] + 1
+                    cdr_atom_indices.append(ca_idx)
+
+    if len(antigen_token_indices) > 0 and len(cdr_token_indices) > 0:
+        antigen_token_idx = torch.tensor(antigen_token_indices, dtype=torch.long)
+        cdr_token_idx = torch.tensor(cdr_token_indices, dtype=torch.long)
+        antigen_atom_idx = torch.tensor(antigen_atom_indices, dtype=torch.long)
+        cdr_atom_idx = torch.tensor(cdr_atom_indices, dtype=torch.long)
+        threshold_tensor = torch.tensor([threshold], dtype=torch.float32)
+    else:
+        antigen_token_idx = torch.empty((0,), dtype=torch.long)
+        cdr_token_idx = torch.empty((0,), dtype=torch.long)
+        antigen_atom_idx = torch.empty((0,), dtype=torch.long)
+        cdr_atom_idx = torch.empty((0,), dtype=torch.long)
+        threshold_tensor = torch.tensor([8.0], dtype=torch.float32)
+
+    return {
+        "embedding_interface_antigen_token_idx": antigen_token_idx,
+        "embedding_interface_cdr_token_idx": cdr_token_idx,
+        "embedding_interface_antigen_atom_idx": antigen_atom_idx,
+        "embedding_interface_cdr_atom_idx": cdr_atom_idx,
+        "embedding_interface_threshold": threshold_tensor,
+    }
+
+
 class Boltz2Featurizer:
     """Boltz2 featurizer."""
 
@@ -2454,6 +2540,9 @@ class Boltz2Featurizer:
         ] = None,
         inference_cdr3_beta_constraints: Optional[
             list[tuple[float, list[tuple[int, int, int]]]]
+        ] = None,
+        inference_embedding_interface_constraints: Optional[
+            list[tuple[int, float, list[tuple[int, int, int]], bool]]
         ] = None,
         compute_affinity: bool = False,
     ) -> dict[str, Tensor]:
@@ -2588,6 +2677,7 @@ class Boltz2Featurizer:
         cdr3_constraint_features = {}
         antigen_orientation_constraint_features = {}
         cdr3_beta_constraint_features = {}
+        embedding_interface_constraint_features = {}
         if compute_constraint_features:
             residue_constraint_features = process_residue_constraint_features(data)
             chain_constraint_features = process_chain_feature_constraints(data)
@@ -2608,6 +2698,10 @@ class Boltz2Featurizer:
                 data=data,
                 inference_cdr3_beta_constraints=inference_cdr3_beta_constraints if inference_cdr3_beta_constraints else [],
             )
+            embedding_interface_constraint_features = process_embedding_interface_constraints(
+                data=data,
+                inference_embedding_interface_constraints=inference_embedding_interface_constraints if inference_embedding_interface_constraints else [],
+            )
 
         return {
             **token_features,
@@ -2623,5 +2717,6 @@ class Boltz2Featurizer:
             **cdr3_constraint_features,
             **antigen_orientation_constraint_features,
             **cdr3_beta_constraint_features,
+            **embedding_interface_constraint_features,
             **ligand_to_mw,
         }
