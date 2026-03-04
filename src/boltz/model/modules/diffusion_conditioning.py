@@ -92,30 +92,21 @@ class DiffusionConditioning(Module):
             relative_position_encoding,
         )
 
-        # Apply CDR3 beta scaling if enabled
+        # Precompute CDR3 pair mask for scaling attention biases
+        cdr3_pair_mask_4d = None  # [1, n, n, 1] float mask for CDR3 pairs
+        beta_val = 0.0
         if "cdr3_token_mask" in feats and "cdr3_beta_value" in feats:
             cdr3_mask = feats["cdr3_token_mask"].to(z.device).to(torch.bool)
             cdr3_beta = feats["cdr3_beta_value"].to(z.device)
             beta_val = float(cdr3_beta.item())
 
-            # cdr3_mask might have batch dimension [batch, n_tokens] or just [n_tokens]
             if cdr3_mask.dim() == 2:
-                # Remove batch dimension
                 cdr3_mask = cdr3_mask.squeeze(0)
 
-            if abs(beta_val) > 1e-6:  # Only apply if non-zero
-                # Create pair mask: True for (i,j) where both i and j are in CDR3
-                # cdr3_mask shape: [n_tokens], z shape: [batch, n_tokens, n_tokens, tz]
-                cdr3_mask_i = cdr3_mask.unsqueeze(-1)  # [n_tokens, 1]
-                cdr3_mask_j = cdr3_mask.unsqueeze(-2)  # [1, n_tokens]
-                cdr3_pair_mask = (cdr3_mask_i & cdr3_mask_j)  # [n_tokens, n_tokens]
-
-                # Apply scaling: z[CDR3] *= (1 + beta)
-                # Add batch and feature dimensions for broadcasting: [1, n_tokens, n_tokens, 1]
-                scaling_tensor = cdr3_pair_mask.unsqueeze(0).unsqueeze(-1).float()
-                scaling_factor = 1.0 + beta_val * scaling_tensor
-
-                z = z * scaling_factor
+            if abs(beta_val) > 1e-6:
+                cdr3_mask_i = cdr3_mask.unsqueeze(-1)  # [n, 1]
+                cdr3_mask_j = cdr3_mask.unsqueeze(-2)  # [1, n]
+                cdr3_pair_mask_4d = (cdr3_mask_i & cdr3_mask_j).unsqueeze(0).unsqueeze(-1).float()
 
         q, c, p, to_keys = self.atom_encoder(
             feats=feats,
@@ -137,5 +128,12 @@ class DiffusionConditioning(Module):
         for layer in self.token_trans_proj_z:
             token_trans_bias.append(layer(z))
         token_trans_bias = torch.cat(token_trans_bias, dim=-1)
+
+        # Apply CDR3 beta scaling to attention biases AFTER LayerNorm+Linear
+        # (scaling before LayerNorm has zero effect since LayerNorm is scale-invariant)
+        if cdr3_pair_mask_4d is not None:
+            # token_trans_bias: [batch, n, n, total_heads]
+            # Scale CDR3 pair biases: amplify (beta>0) or suppress (beta<0) attention
+            token_trans_bias = token_trans_bias + beta_val * cdr3_pair_mask_4d * token_trans_bias
 
         return q, c, to_keys, atom_enc_bias, atom_dec_bias, token_trans_bias
