@@ -243,7 +243,7 @@ def evaluate_dockq(manifest: pd.DataFrame, output_dir: Path) -> pd.DataFrame:
     all_rows = []
     total = len(manifest)
     for i, (_, row) in enumerate(manifest.iterrows()):
-        json_name = f"{row['variant']}_model_{row['model_idx']}.json"
+        json_name = f"{row['method']}_{row['variant']}_model_{row['model_idx']}.json"
         json_path = str(dockq_dir / json_name)
 
         if os.path.exists(json_path):
