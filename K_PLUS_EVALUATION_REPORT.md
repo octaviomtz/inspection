@@ -16,6 +16,93 @@
 
 ---
 
+## 1b. What K+ Does: Intuition and Mechanism
+
+### The Core Idea
+
+Boltz2 is a diffusion model that predicts protein complex structures by iteratively denoising atomic coordinates. Internally, it operates on a learned **pair representation** — a matrix encoding pairwise relationships between all residues in the complex. During inference, the diffusion process follows a trajectory through this latent space, and the final structure depends on which direction the denoising steps take.
+
+The key insight behind K+ is that **beta-scaling defines search directions in this latent space**. By multiplying the pair representation entries between specific residue pairs by a scalar beta value, we can bias the diffusion process to explore particular binding modes. A positive beta (e.g., +0.5) on a region amplifies the model's attention to interactions involving those residues, effectively saying "look harder for contacts here." A negative beta (e.g., -0.3) suppresses attention, saying "don't focus here."
+
+The biological motivation is that **different antigen surface patches should have different "preference" for CDR contact based on the model's learned priors**. Boltz2, trained on thousands of protein complexes, has internalized general principles of protein-protein binding — hydrophobic patches tend to be buried at interfaces, charged surfaces can form salt bridges, flexible loops accommodate shape complementarity. By amplifying the pair representation for a specific antigen region, K+ asks the model: "If you had to make contacts *here*, what would the structure look like?" By scanning across all regions and accumulating the results, K+ builds a map of which regions the model finds most plausible as epitopes.
+
+In other words, K+ treats the diffusion model as a scoring function: regions where beta-scaling easily produces high-confidence contacts are likely true epitopes; regions where the model resists forming contacts (even with amplification) are likely non-epitope surface.
+
+### How K+ Runs
+
+In the current evaluation, K+ applies CDR3-specific beta-scaling during a single Boltz2 prediction run. The beta-scaling emphasizes CDR3-antigen interactions across the antigen surface. Up to 5 models (`model_0` through `model_4`) are generated per complex.
+
+The full K+ design envisions a multi-region scanning pipeline: partition the antigen into overlapping patches, run separate predictions with each patch emphasized, and accumulate a contact heatmap. However, the current evaluation tests the single-run CDR3-beta variant (not the full multi-region pipeline), which is why only one configuration per complex exists for K+.
+
+---
+
+## 1c. How Epitope Predictions Are Made and Evaluated
+
+### The Epitope Prediction Strategy (No Ground Truth Used)
+
+A critical point: **the epitope prediction for each method is derived entirely from the method's own predicted structure, with no access to the ground-truth crystal structure.** The ground truth is used only afterward, to score how well the prediction matches reality.
+
+The logic works as follows. Each method (B1, B2, B3, K+) produces a predicted 3D structure of the antibody-antigen complex. In that predicted structure, the antibody (chains B and C) is docked against the antigen (chain A) in some pose. The **predicted epitope** is simply the set of antigen residues that end up physically close to the antibody in that predicted pose. Specifically:
+
+1. Load the **predicted structure** (the method's output `.pdb` or `.cif` file)
+2. Collect all heavy atoms (non-hydrogen) from the antibody chains (B, C)
+3. For each antigen residue (chain A), compute the minimum distance between any of its heavy atoms and any antibody heavy atom
+4. If that minimum distance is less than 5 Angstrom, the residue is classified as a **predicted epitope residue**
+5. This produces a set of antigen residue IDs: the predicted epitope
+
+This is a purely geometric extraction from the predicted structure. It uses no information from the crystal structure. The prediction is implicit in the docking pose: if a method places the antibody near the correct part of the antigen, the contact residues will match the true epitope. If the method docks the antibody in the wrong orientation, the contact residues will be wrong.
+
+### The Ground-Truth Epitope (Used Only for Scoring)
+
+The ground-truth epitope is extracted from the crystal structure (`pdb_minimized/*.pdb`) using the **exact same geometric procedure**: antigen residues within 5 Angstrom of any antibody heavy atom. The crystal structure represents the experimentally determined binding pose, so the residues in contact there are the "true" epitope.
+
+### Computing TP, FP, FN, TN
+
+Once we have both sets — predicted epitope and ground-truth epitope — we compare them:
+
+- **TP (True Positive)**: Residues in both the predicted and ground-truth epitope sets
+- **FP (False Positive)**: Residues in the predicted epitope but not in the ground truth (the method predicted contact where there is none)
+- **FN (False Negative)**: Residues in the ground-truth epitope but not in the predicted set (the method missed a true contact)
+- **TN (True Negative)**: Antigen residues in neither set (correctly identified as non-epitope)
+
+From these: Precision = TP/(TP+FP), Recall = TP/(TP+FN), F1 = harmonic mean, MCC = Matthews correlation coefficient.
+
+### Which of the 5 Models Is Used?
+
+Each Boltz2 run produces up to 5 candidate models (`model_0` through `model_4`). The evaluation script selects the **single model with the highest `confidence_score`** from the accompanying JSON files (this is the "best-by-confidence" strategy). This mimics the real-world user workflow, where one would pick the model that Boltz2 itself rates as most confident.
+
+The selected model's predicted structure is then used for:
+- Epitope extraction (as described above)
+- DockQ scoring (compared against the crystal structure)
+- Antibody-aligned antigen RMSD computation
+
+For the results in `k_plus_2/results_per_complex.csv`, each row corresponds to one method + one complex, using that single best-by-confidence model. The `model_file` column records which model was chosen (e.g., `7TRH_HBG_model_0.pdb`).
+
+### Summary of the Data Flow
+
+```
+Predicted structure (method's output)          Crystal structure (ground truth)
+         |                                              |
+         v                                              v
+  extract_epitope(pred_structure)              extract_epitope(gt_structure)
+         |                                              |
+         v                                              v
+   pred_epitope (set of residue IDs)           gt_epitope (set of residue IDs)
+         |                                              |
+         +------------------+---------------------------+
+                            |
+                            v
+               compute_epitope_metrics(gt, pred, n_residues)
+                            |
+                            v
+                     TP, FP, FN, TN
+                  Precision, Recall, F1, MCC
+```
+
+The ground truth is **never used to inform or modify the prediction**. It is used only as the reference answer to evaluate how well each method's predicted docking pose captures the true binding interface.
+
+---
+
 ## 2. k_plus_2: K+ vs B1 (Head-to-Head, 47 Complexes)
 
 ### 2.1 DockQ Bar Chart (dockq_bar.png)
