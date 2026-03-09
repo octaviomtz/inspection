@@ -21,6 +21,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy.stats import wilcoxon, spearmanr
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -169,8 +173,10 @@ def discover_b2(complex_ids):
 
 def discover_nf(complex_ids):
     """
-    NF: predictions_examples/new_feature_cdr3_beta/
-        boltz_results_{CID}_cdr3_beta/predictions/{CID}_cdr3_beta/
+    NF: Antigen steering predictions.
+    Supports two directory layouts:
+      - boltz_results_{CID}/predictions/{CID}/           (a_antigen_steer style)
+      - boltz_results_{CID}_cdr3_beta/predictions/{CID}_cdr3_beta/  (legacy)
     One setting per complex, may have CIF files.
     """
     results = {}
@@ -179,7 +185,11 @@ def discover_nf(complex_ids):
         return results
 
     for cid in complex_ids:
-        result_dir = base / f"boltz_results_{cid}_cdr3_beta" / "predictions" / f"{cid}_cdr3_beta"
+        # Try primary layout first (same as B0 but under NF base dir)
+        result_dir = base / f"boltz_results_{cid}" / "predictions" / cid
+        if not result_dir.exists():
+            # Fallback to legacy _cdr3_beta layout
+            result_dir = base / f"boltz_results_{cid}_cdr3_beta" / "predictions" / f"{cid}_cdr3_beta"
         if not result_dir.exists():
             continue
         models = _find_prediction_files(result_dir)
@@ -267,7 +277,18 @@ def evaluate_models(model_paths, native_path, dockq_cache_dir):
     """
     results = []
     for model_path in model_paths:
-        cache_key = model_path.stem
+        # Include parent directory names in cache key to avoid collisions
+        # between methods that produce identically-named model files
+        # e.g. antigen_cut/.../7TRH_HBG_model_0 vs a_antigen_steer/.../7TRH_HBG_model_0
+        parent_parts = model_path.parts
+        # Use the grandparent+ dirs to disambiguate: method_dir/boltz_results_X/predictions/X/model.pdb
+        # Take everything after predictions_examples (or use last 4 path components)
+        try:
+            idx = list(parent_parts).index("predictions_examples")
+            unique_parts = parent_parts[idx + 1:]
+        except ValueError:
+            unique_parts = parent_parts[-4:]
+        cache_key = "_".join(unique_parts).replace(".pdb", "").replace(".cif", "")
         json_out = dockq_cache_dir / f"dockq_{cache_key}.json"
 
         # Use cache if available
@@ -584,6 +605,373 @@ def compute_confidence_correlation(all_results):
 
 
 # ---------------------------------------------------------------------------
+# Plotting
+# ---------------------------------------------------------------------------
+
+METHOD_COLORS = {
+    "B0": "#7f8c8d",   # gray
+    "B1": "#2980b9",   # blue
+    "B2": "#8e44ad",   # purple
+    "NF": "#e67e22",   # orange
+}
+
+METHOD_ORDER = ["B0", "B1", "B2", "NF"]
+
+
+def _available_methods(df, metric_suffix="DockQ_AbAg"):
+    """Return methods that have data in df."""
+    return [m for m in METHOD_ORDER if f"{m}_{metric_suffix}" in df.columns
+            and df[f"{m}_{metric_suffix}"].notna().any()]
+
+
+def _savefig(fig, path):
+    fig.savefig(path, dpi=200, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    print(f"  Plot saved: {path.name}")
+
+
+def plot_aggregate_bars(df_conf, df_oracle, output_dir):
+    """Bar chart comparing mean DockQ_AbAg across methods, confidence vs oracle."""
+    methods = _available_methods(df_conf)
+    if not methods:
+        return
+
+    conf_means = [df_conf[f"{m}_DockQ_AbAg"].dropna().mean() for m in methods]
+    orac_means = [df_oracle[f"{m}_DockQ_AbAg"].dropna().mean() for m in methods]
+    labels = [f"{m}\n{METHOD_LABELS[m]}" for m in methods]
+    colors = [METHOD_COLORS[m] for m in methods]
+
+    x = np.arange(len(methods))
+    w = 0.35
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    bars1 = ax.bar(x - w / 2, conf_means, w, label="Confidence selection",
+                   color=colors, edgecolor="white", linewidth=0.8)
+    bars2 = ax.bar(x + w / 2, orac_means, w, label="Oracle selection",
+                   color=colors, edgecolor="white", linewidth=0.8, alpha=0.55,
+                   hatch="//")
+
+    for bar in list(bars1) + list(bars2):
+        h = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width() / 2, h + 0.005, f"{h:.3f}",
+                ha="center", va="bottom", fontsize=8)
+
+    ax.set_ylabel("Mean DockQ (Ab-Ag)")
+    ax.set_title("Aggregate DockQ by Method")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.legend(frameon=False)
+    ax.set_ylim(0, max(max(conf_means), max(orac_means)) * 1.25)
+    ax.spines[["top", "right"]].set_visible(False)
+
+    _savefig(fig, output_dir / "plot_aggregate_dockq.png")
+
+
+def plot_capri_stacked(df_conf, df_oracle, output_dir):
+    """Stacked bar chart of CAPRI quality distribution."""
+    tier_colors = {
+        "Incorrect":  "#e74c3c",
+        "Acceptable": "#f39c12",
+        "Medium":     "#2ecc71",
+        "High":       "#2980b9",
+    }
+
+    for selection, df in [("confidence", df_conf), ("oracle", df_oracle)]:
+        methods = _available_methods(df)
+        if not methods:
+            continue
+
+        fig, ax = plt.subplots(figsize=(7, 5))
+        labels = [f"{m}\n{METHOD_LABELS[m]}" for m in methods]
+        x = np.arange(len(methods))
+        bottoms = np.zeros(len(methods))
+
+        for tier_label, lo, hi in CAPRI_THRESHOLDS:
+            fracs = []
+            for m in methods:
+                vals = df[f"{m}_DockQ_AbAg"].dropna()
+                n = len(vals)
+                count = ((vals >= lo) & (vals < hi)).sum()
+                fracs.append(count / n * 100 if n > 0 else 0)
+            fracs = np.array(fracs)
+            bars = ax.bar(x, fracs, 0.6, bottom=bottoms, label=tier_label,
+                          color=tier_colors[tier_label], edgecolor="white",
+                          linewidth=0.5)
+            for i, (frac, bot) in enumerate(zip(fracs, bottoms)):
+                if frac >= 8:
+                    ax.text(x[i], bot + frac / 2, f"{frac:.0f}%",
+                            ha="center", va="center", fontsize=8,
+                            color="white", fontweight="bold")
+            bottoms += fracs
+
+        ax.set_ylabel("Percentage of complexes")
+        ax.set_title(f"CAPRI Quality Distribution ({selection} selection)")
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, fontsize=9)
+        ax.set_ylim(0, 105)
+        ax.legend(loc="upper right", frameon=False, fontsize=8)
+        ax.spines[["top", "right"]].set_visible(False)
+
+        _savefig(fig, output_dir / f"plot_capri_{selection}.png")
+
+
+def plot_boxplot_dockq(df_conf, df_oracle, output_dir):
+    """Box plots of per-complex DockQ_AbAg distribution per method."""
+    for selection, df in [("confidence", df_conf), ("oracle", df_oracle)]:
+        methods = _available_methods(df)
+        if not methods:
+            continue
+
+        data = []
+        labels = []
+        colors = []
+        for m in methods:
+            vals = df[f"{m}_DockQ_AbAg"].dropna().values
+            data.append(vals)
+            labels.append(f"{m}\n{METHOD_LABELS[m]}")
+            colors.append(METHOD_COLORS[m])
+
+        fig, ax = plt.subplots(figsize=(7, 5))
+        bp = ax.boxplot(data, patch_artist=True, widths=0.5,
+                        medianprops=dict(color="black", linewidth=1.5))
+        for patch, color in zip(bp["boxes"], colors):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.7)
+
+        # Overlay individual points
+        for i, vals in enumerate(data):
+            jitter = np.random.default_rng(42).uniform(-0.12, 0.12, len(vals))
+            ax.scatter(np.full(len(vals), i + 1) + jitter, vals,
+                       s=12, alpha=0.4, color=colors[i], edgecolors="none", zorder=3)
+
+        ax.set_xticklabels(labels, fontsize=9)
+        ax.set_ylabel("DockQ (Ab-Ag)")
+        ax.set_title(f"DockQ Distribution ({selection} selection)")
+        ax.spines[["top", "right"]].set_visible(False)
+
+        _savefig(fig, output_dir / f"plot_boxplot_{selection}.png")
+
+
+def plot_paired_scatter(df, output_dir):
+    """Scatter NF vs B0 per-complex DockQ_AbAg (confidence selection)."""
+    nf_col, b0_col = "NF_DockQ_AbAg", "B0_DockQ_AbAg"
+    if nf_col not in df.columns or b0_col not in df.columns:
+        return
+    paired = df[[b0_col, nf_col]].dropna()
+    if len(paired) < 3:
+        return
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    lim = max(paired[b0_col].max(), paired[nf_col].max()) * 1.1
+    lim = max(lim, 0.1)
+    ax.plot([0, lim], [0, lim], "k--", alpha=0.3, linewidth=1, zorder=0)
+    ax.scatter(paired[b0_col], paired[nf_col],
+               s=30, alpha=0.7, color=METHOD_COLORS["NF"], edgecolors="white",
+               linewidth=0.4, zorder=2)
+
+    n_above = (paired[nf_col] > paired[b0_col]).sum()
+    n_below = (paired[nf_col] < paired[b0_col]).sum()
+    n_equal = (paired[nf_col] == paired[b0_col]).sum()
+    ax.text(0.05, 0.92, f"NF wins: {n_above}\nB0 wins: {n_below}\nTied: {n_equal}",
+            transform=ax.transAxes, fontsize=9, va="top",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="wheat", alpha=0.5))
+
+    ax.set_xlabel("B0 (Unconstrained) DockQ Ab-Ag")
+    ax.set_ylabel("NF (Antigen Steering) DockQ Ab-Ag")
+    ax.set_title("Per-Complex: NF vs B0 (confidence selection)")
+    ax.set_xlim(-0.02, lim)
+    ax.set_ylim(-0.02, lim)
+    ax.set_aspect("equal")
+    ax.spines[["top", "right"]].set_visible(False)
+
+    _savefig(fig, output_dir / "plot_scatter_nf_vs_b0.png")
+
+
+def plot_delta_waterfall(df, output_dir):
+    """Waterfall chart of per-complex DockQ delta (NF - B0), sorted."""
+    nf_col, b0_col = "NF_DockQ_AbAg", "B0_DockQ_AbAg"
+    if nf_col not in df.columns or b0_col not in df.columns:
+        return
+    paired = df[["complex_id", b0_col, nf_col]].dropna()
+    if len(paired) < 3:
+        return
+
+    paired = paired.copy()
+    paired["delta"] = paired[nf_col] - paired[b0_col]
+    paired = paired.sort_values("delta")
+
+    fig, ax = plt.subplots(figsize=(max(8, len(paired) * 0.22), 5))
+    colors = ["#2ecc71" if d > 0 else "#e74c3c" if d < 0 else "#95a5a6"
+              for d in paired["delta"]]
+    ax.bar(range(len(paired)), paired["delta"], color=colors, edgecolor="white",
+           linewidth=0.3)
+    ax.axhline(0, color="black", linewidth=0.8)
+
+    ax.set_xticks(range(len(paired)))
+    ax.set_xticklabels(paired["complex_id"], rotation=90, fontsize=6)
+    ax.set_ylabel("Delta DockQ Ab-Ag (NF - B0)")
+    ax.set_title("Per-Complex Improvement: NF vs B0 (confidence selection)")
+    ax.spines[["top", "right"]].set_visible(False)
+
+    mean_delta = paired["delta"].mean()
+    ax.axhline(mean_delta, color=METHOD_COLORS["NF"], linestyle="--",
+               linewidth=1, alpha=0.7)
+    ax.text(len(paired) - 1, mean_delta, f" mean={mean_delta:+.3f}",
+            va="bottom", fontsize=8, color=METHOD_COLORS["NF"])
+
+    _savefig(fig, output_dir / "plot_delta_nf_vs_b0.png")
+
+
+def plot_confidence_vs_dockq(all_results, output_dir):
+    """Scatter plot of confidence score vs DockQ_AbAg for each method."""
+    methods = [m for m in METHOD_ORDER if m in all_results]
+    if not methods:
+        return
+
+    n = len(methods)
+    fig, axes = plt.subplots(1, n, figsize=(4.5 * n, 4.5), squeeze=False)
+    axes = axes[0]
+
+    for ax, method_id in zip(axes, methods):
+        confs, dockqs = [], []
+        for cid, data in all_results[method_id].items():
+            for model in data["all_models"]:
+                c = model["confidence_score"]
+                d = model["dockq_ab_ac"]
+                if not np.isnan(c) and not np.isnan(d):
+                    confs.append(c)
+                    dockqs.append(d)
+
+        if len(confs) < 5:
+            ax.set_title(f"{method_id}: {METHOD_LABELS[method_id]}\n(too few points)")
+            continue
+
+        ax.scatter(confs, dockqs, s=15, alpha=0.45, color=METHOD_COLORS[method_id],
+                   edgecolors="none")
+        rho, p = spearmanr(confs, dockqs)
+        ax.set_xlabel("Confidence score")
+        ax.set_ylabel("DockQ Ab-Ag")
+        ax.set_title(f"{method_id}: {METHOD_LABELS[method_id]}\n"
+                     f"rho={rho:.3f}, p={p:.1e}, n={len(confs)}")
+        ax.spines[["top", "right"]].set_visible(False)
+
+    fig.suptitle("Confidence Calibration", fontsize=13, y=1.02)
+    fig.tight_layout()
+    _savefig(fig, output_dir / "plot_confidence_calibration.png")
+
+
+def plot_irmsd_bars(df_conf, output_dir):
+    """Bar chart comparing mean iRMSD_AB across methods (confidence selection)."""
+    methods = [m for m in METHOD_ORDER if f"{m}_iRMSD_AB" in df_conf.columns
+               and df_conf[f"{m}_iRMSD_AB"].notna().any()]
+    if not methods:
+        return
+
+    means = [df_conf[f"{m}_iRMSD_AB"].dropna().mean() for m in methods]
+    labels = [f"{m}\n{METHOD_LABELS[m]}" for m in methods]
+    colors = [METHOD_COLORS[m] for m in methods]
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    bars = ax.bar(range(len(methods)), means, 0.55, color=colors,
+                  edgecolor="white", linewidth=0.8)
+    for bar, val in zip(bars, means):
+        ax.text(bar.get_x() + bar.get_width() / 2, val + 0.15, f"{val:.1f}",
+                ha="center", va="bottom", fontsize=9)
+
+    ax.set_xticks(range(len(methods)))
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_ylabel("Mean iRMSD (Ab chain, lower is better)")
+    ax.set_title("Interface RMSD by Method (confidence selection)")
+    ax.spines[["top", "right"]].set_visible(False)
+
+    _savefig(fig, output_dir / "plot_irmsd.png")
+
+
+def plot_fnat_bars(df_conf, output_dir):
+    """Bar chart comparing mean fnat_AB across methods (confidence selection)."""
+    methods = [m for m in METHOD_ORDER if f"{m}_fnat_AB" in df_conf.columns
+               and df_conf[f"{m}_fnat_AB"].notna().any()]
+    if not methods:
+        return
+
+    means = [df_conf[f"{m}_fnat_AB"].dropna().mean() for m in methods]
+    labels = [f"{m}\n{METHOD_LABELS[m]}" for m in methods]
+    colors = [METHOD_COLORS[m] for m in methods]
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    bars = ax.bar(range(len(methods)), means, 0.55, color=colors,
+                  edgecolor="white", linewidth=0.8)
+    for bar, val in zip(bars, means):
+        ax.text(bar.get_x() + bar.get_width() / 2, val + 0.005, f"{val:.3f}",
+                ha="center", va="bottom", fontsize=9)
+
+    ax.set_xticks(range(len(methods)))
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_ylabel("Mean fnat (fraction native contacts)")
+    ax.set_title("Native Contact Recovery by Method (confidence selection)")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_ylim(0, max(means) * 1.3)
+
+    _savefig(fig, output_dir / "plot_fnat.png")
+
+
+def plot_per_complex_heatmap(df, output_dir):
+    """Heatmap of DockQ_AbAg per complex per method (confidence selection)."""
+    methods = _available_methods(df)
+    if len(methods) < 2:
+        return
+
+    cols = [f"{m}_DockQ_AbAg" for m in methods]
+    sub = df[["complex_id"] + cols].dropna(subset=cols, how="all").copy()
+    if len(sub) < 3:
+        return
+
+    # Sort complexes by B0 or first method's score
+    sort_col = cols[0]
+    sub = sub.sort_values(sort_col, ascending=False)
+
+    matrix = sub[cols].values
+    labels_y = sub["complex_id"].values
+    labels_x = [f"{m}: {METHOD_LABELS[m]}" for m in methods]
+
+    fig_height = max(5, len(labels_y) * 0.25)
+    fig, ax = plt.subplots(figsize=(3 + len(methods) * 1.5, fig_height))
+    im = ax.imshow(matrix, aspect="auto", cmap="RdYlGn", vmin=0, vmax=1)
+
+    ax.set_xticks(range(len(labels_x)))
+    ax.set_xticklabels(labels_x, fontsize=9, rotation=30, ha="right")
+    ax.set_yticks(range(len(labels_y)))
+    ax.set_yticklabels(labels_y, fontsize=6)
+    ax.set_title("DockQ Ab-Ag per Complex (confidence selection)")
+
+    cbar = fig.colorbar(im, ax=ax, shrink=0.6, pad=0.02)
+    cbar.set_label("DockQ Ab-Ag", fontsize=9)
+
+    _savefig(fig, output_dir / "plot_heatmap_dockq.png")
+
+
+def generate_all_plots(all_results, output_dir):
+    """Generate all evaluation plots and save to output_dir."""
+    print(f"\n{'='*70}")
+    print("  GENERATING PLOTS")
+    print(f"{'='*70}")
+
+    # Build per-complex DataFrames for both selections
+    df_conf = build_summary_table(all_results, "confidence")
+    df_oracle = build_summary_table(all_results, "oracle")
+
+    plot_aggregate_bars(df_conf, df_oracle, output_dir)
+    plot_capri_stacked(df_conf, df_oracle, output_dir)
+    plot_boxplot_dockq(df_conf, df_oracle, output_dir)
+    plot_paired_scatter(df_conf, output_dir)
+    plot_delta_waterfall(df_conf, output_dir)
+    plot_confidence_vs_dockq(all_results, output_dir)
+    plot_irmsd_bars(df_conf, output_dir)
+    plot_fnat_bars(df_conf, output_dir)
+    plot_per_complex_heatmap(df_conf, output_dir)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -706,12 +1094,15 @@ def main():
         corr_df.to_csv(corr_csv, index=False, float_format="%.4f")
         print(corr_df.to_string(index=False, float_format=lambda x: f"{x:.4f}"))
 
-    # 5. Summary
+    # 5. Generate plots
+    generate_all_plots(all_results, output_dir)
+
+    # 6. Summary
     print(f"\n{'='*70}")
     print(f"  All results saved to: {output_dir}/")
     print(f"{'='*70}")
     print("Files:")
-    for f in sorted(output_dir.glob("*.csv")):
+    for f in sorted(output_dir.glob("*.csv")) + sorted(output_dir.glob("*.png")):
         print(f"  {f.name}")
 
 
