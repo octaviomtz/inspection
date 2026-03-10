@@ -18,6 +18,10 @@ Usage:
 DockQ is called via `conda run -n dockq2 DockQ ...` subprocess.
 Plots require matplotlib (available in dockq2 env, not boltz). Use --skip_plots or
 run from dockq2 env for plots. All other metrics work in the boltz env.
+
+Intermediate results are cached per (method, complex) in {out_dir}/cache/.
+If interrupted, re-running the same command resumes from where it left off.
+Use --force to ignore cached results and re-evaluate everything.
 """
 
 import argparse
@@ -55,33 +59,57 @@ CAPRI_THRESHOLDS = {
 
 DOCKQ_CONDA_ENV = "dockq2"
 
-# Methods and their folder patterns
-METHODS = {
-    "B1": {
-        "folder": "antigen_cut",
-        "pattern": "boltz_results_{complex}",
-        "pred_subdir": "predictions/{complex}",
-        "file_pattern": "{complex}_model_{i}.pdb",
-        "multi_setting": False,
-    },
-    "V": {
-        "folder": "new_feature_cdr3_beta",
-        "pattern": "boltz_results_{complex}_cdr3_beta",
-        "pred_subdir": "predictions/{complex}_cdr3_beta",
-        "file_pattern": "{complex}_cdr3_beta_model_{i}",  # .pdb or .cif
-        "multi_setting": False,
-    },
-    "B2": {
-        "folder": "antigen_cut_contact_restraints",
-        "pattern": "boltz_results_restraint_{complex}_*",
-        "multi_setting": True,
-    },
-    "B3": {
-        "folder": "antigen_cut_vhvl_msa_pocket_ab_boltz_post_2023_omm",
-        "pattern": "boltz_results_restraint_to_A_{complex}_*",
-        "multi_setting": True,
-    },
+# Default subfolder names under --pred_dir for each method.
+# Override with --b1_folder / --v_folder CLI args.
+DEFAULT_FOLDERS = {
+    "B1": "antigen_cut",
+    "V": "v_embedding_steer",
+    "B2": "antigen_cut_contact_restraints",
+    "B3": "antigen_cut_vhvl_msa_pocket_ab_boltz_post_2023_omm",
 }
+
+
+# ---------------------------------------------------------------------------
+# Cache: incremental per-(method, complex) result persistence
+# ---------------------------------------------------------------------------
+
+def _cache_path(out_dir, method, complex_name):
+    """Return the cache file path for a (method, complex) pair."""
+    return out_dir / "cache" / method / f"{complex_name}.json"
+
+
+def _serialize_result(r):
+    """Make a single result dict JSON-serializable."""
+    sr = {}
+    for k, v in r.items():
+        if isinstance(v, (np.floating, np.integer)):
+            sr[k] = float(v)
+        elif isinstance(v, Path):
+            sr[k] = str(v)
+        else:
+            sr[k] = v
+    return sr
+
+
+def save_cache(out_dir, method, complex_name, model_results):
+    """Save model results for one (method, complex) to disk immediately."""
+    path = _cache_path(out_dir, method, complex_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    serializable = [_serialize_result(r) for r in model_results]
+    with open(path, "w") as f:
+        json.dump(serializable, f, indent=2, default=str)
+
+
+def load_cache(out_dir, method, complex_name):
+    """Load cached results for one (method, complex). Returns list or None."""
+    path = _cache_path(out_dir, method, complex_name)
+    if not path.exists():
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -672,54 +700,68 @@ def compute_contact_analysis(pred_path, gt_path):
 # Discovery: find prediction files
 # ---------------------------------------------------------------------------
 
-def discover_predictions_b1(pred_base, complexes):
-    """Discover B1 (vanilla Boltz2) predictions."""
-    folder = pred_base / METHODS["B1"]["folder"]
-    results = {}
+def discover_predictions(folder, complexes, metrics_dir=None):
+    """Discover predictions in a standard Boltz2 output folder.
 
+    Handles two naming layouts:
+      Standard:  {folder}/boltz_results_{complex}/predictions/{complex}/{complex}_model_{i}.{pdb,cif}
+      Suffixed:  {folder}/boltz_results_{complex}_{suffix}/predictions/{complex}_{suffix}/{complex}_{suffix}_model_{i}.{pdb,cif}
+
+    The suffixed layout is detected automatically when the standard one doesn't exist.
+
+    Args:
+        folder: Path to the method's result folder.
+        complexes: List of complex names to look for.
+        metrics_dir: Optional alternative directory that mirrors the folder
+                     structure but contains the confidence/plddt/pae files.
+                     When set, each model_info["metrics_dir"] points there.
+
+    Returns:
+        Dict mapping complex name -> list of model_info dicts.
+    """
+    if not folder.exists():
+        return {}
+
+    results = {}
     for cname in complexes:
+        # Try standard naming first
         result_dir = folder / f"boltz_results_{cname}"
         pred_dir = result_dir / "predictions" / cname
+        inner_prefix = cname
+
         if not pred_dir.exists():
-            continue
+            # Try suffixed naming: boltz_results_{complex}_{suffix}
+            candidates = sorted(folder.glob(f"boltz_results_{cname}_*"))
+            found = False
+            for cand in candidates:
+                suffix_part = cand.name[len(f"boltz_results_{cname}"):]  # e.g. "_cdr3_beta"
+                inner_name = f"{cname}{suffix_part}"
+                alt_pred_dir = cand / "predictions" / inner_name
+                if alt_pred_dir.exists():
+                    result_dir = cand
+                    pred_dir = alt_pred_dir
+                    inner_prefix = inner_name
+                    found = True
+                    break
+            if not found:
+                continue
+
+        # Resolve the directory where confidence/plddt/pae files live
+        if metrics_dir is not None:
+            m_dir = metrics_dir / result_dir.name / "predictions" / pred_dir.name
+        else:
+            m_dir = pred_dir
 
         models = []
         for i in range(5):
-            pdb_path = pred_dir / f"{cname}_model_{i}.pdb"
-            if pdb_path.exists():
-                models.append({
-                    "path": pdb_path,
-                    "prefix": f"{cname}_model_{i}",
-                    "pred_dir": pred_dir,
-                    "model_idx": i,
-                })
-        if models:
-            results[cname] = models
-
-    return results
-
-
-def discover_predictions_v(pred_base, complexes):
-    """Discover V (embedding steering) predictions."""
-    folder = pred_base / METHODS["V"]["folder"]
-    results = {}
-
-    for cname in complexes:
-        result_dir = folder / f"boltz_results_{cname}_cdr3_beta"
-        pred_dir = result_dir / "predictions" / f"{cname}_cdr3_beta"
-        if not pred_dir.exists():
-            continue
-
-        models = []
-        for i in range(5):
-            # Try both .cif and .pdb
-            for ext in [".cif", ".pdb"]:
-                path = pred_dir / f"{cname}_cdr3_beta_model_{i}{ext}"
+            for ext in [".pdb", ".cif"]:
+                path = pred_dir / f"{inner_prefix}_model_{i}{ext}"
                 if path.exists():
                     models.append({
                         "path": path,
-                        "prefix": f"{cname}_cdr3_beta_model_{i}",
+                        "prefix": f"{inner_prefix}_model_{i}",
                         "pred_dir": pred_dir,
+                        "metrics_dir": m_dir,
                         "model_idx": i,
                     })
                     break
@@ -729,9 +771,8 @@ def discover_predictions_v(pred_base, complexes):
     return results
 
 
-def discover_predictions_multi(pred_base, method_key, complexes):
+def discover_predictions_multi(folder, method_key, complexes):
     """Discover predictions for multi-setting baselines (B2, B3)."""
-    folder = pred_base / METHODS[method_key]["folder"]
     if not folder.exists():
         return {}
 
@@ -774,6 +815,7 @@ def discover_predictions_multi(pred_base, method_key, complexes):
                                 "path": path,
                                 "prefix": f"{inner_dir.name}_model_{i}",
                                 "pred_dir": inner_dir,
+                                "metrics_dir": inner_dir,
                                 "model_idx": i,
                                 "setting": setting_name,
                             })
@@ -798,7 +840,7 @@ def evaluate_single_prediction(pred_info, gt_path, cdr_info, run_dockq_flag=True
     Returns dict with all metrics.
     """
     pred_path = pred_info["path"]
-    pred_dir = pred_info["pred_dir"]
+    metrics_dir = Path(pred_info.get("metrics_dir", pred_info["pred_dir"]))
     prefix = pred_info["prefix"]
 
     result = {
@@ -826,13 +868,13 @@ def evaluate_single_prediction(pred_info, gt_path, cdr_info, run_dockq_flag=True
             result.update({"cdr3_h_rmsd": np.nan, "cdr3_l_rmsd": np.nan,
                            "cdr3_combined_rmsd": np.nan, "framework_rmsd": np.nan})
 
-    # Tier 3: Confidence
-    conf = extract_confidence(pred_dir, prefix)
+    # Tier 3: Confidence (read from metrics_dir, which may differ from pred_dir)
+    conf = extract_confidence(metrics_dir, prefix)
     result.update(conf)
 
     if cdr_info:
         try:
-            cdr3_plddt = extract_cdr3_plddt(pred_dir, prefix, cdr_info, pred_path)
+            cdr3_plddt = extract_cdr3_plddt(metrics_dir, prefix, cdr_info, pred_path)
             result.update(cdr3_plddt)
         except Exception as e:
             print(f"  CDR3 pLDDT extraction failed for {pred_path}: {e}")
@@ -1303,6 +1345,13 @@ def main():
                         help="Output directory for results")
     parser.add_argument("--methods", nargs="+", default=["B1", "V"],
                         help="Methods to evaluate (default: B1 V)")
+    parser.add_argument("--b1_folder", type=str, default=None,
+                        help="Subfolder name for B1 under --pred_dir (default: antigen_cut)")
+    parser.add_argument("--v_folder", type=str, default=None,
+                        help="Subfolder name for V under --pred_dir (default: v_embedding_steer)")
+    parser.add_argument("--b1_metrics_dir", type=Path, default=None,
+                        help="Alternative base dir for B1 confidence/plddt/pae files, "
+                             "e.g. benchmark/evaluation/predictions_examples/antigen_cut")
     parser.add_argument("--skip_dockq", action="store_true",
                         help="Skip DockQ computation (use cached results)")
     parser.add_argument("--skip_contacts", action="store_true",
@@ -1311,6 +1360,8 @@ def main():
                         help="Skip plot generation")
     parser.add_argument("--complexes", nargs="+", default=None,
                         help="Specific complexes to evaluate (default: all available)")
+    parser.add_argument("--force", action="store_true",
+                        help="Ignore cached results and re-evaluate everything")
     args = parser.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -1326,21 +1377,28 @@ def main():
         all_complexes = [c for c in args.complexes if c in gt_files]
     print(f"Found {len(all_complexes)} ground truth structures")
 
+    # Resolve per-method folder names (CLI overrides > defaults)
+    method_folders = dict(DEFAULT_FOLDERS)
+    if args.b1_folder:
+        method_folders["B1"] = args.b1_folder
+    if args.v_folder:
+        method_folders["V"] = args.v_folder
+
     # Discover predictions per method
     print("\nDiscovering predictions...")
     discovered = {}
     for method in args.methods:
-        if method == "B1":
-            discovered["B1"] = discover_predictions_b1(args.pred_dir, all_complexes)
-        elif method == "V":
-            discovered["V"] = discover_predictions_v(args.pred_dir, all_complexes)
+        folder = args.pred_dir / method_folders.get(method, method)
+        if method in ("B1", "V"):
+            metrics_dir = args.b1_metrics_dir if method == "B1" and args.b1_metrics_dir else None
+            discovered[method] = discover_predictions(folder, all_complexes, metrics_dir=metrics_dir)
         elif method in ("B2", "B3"):
-            multi = discover_predictions_multi(args.pred_dir, method, all_complexes)
+            multi = discover_predictions_multi(folder, method, all_complexes)
             if multi:
                 discovered[method] = multi
         print(f"  {method}: {len(discovered.get(method, {}))} complexes with predictions")
 
-    # Evaluate each method
+    # Evaluate each method (with per-complex caching)
     all_results = {}  # method -> {complex -> [model_results]}
     best_results = {}  # method -> {complex -> best_model_result}
 
@@ -1354,12 +1412,23 @@ def main():
 
         method_all = {}
         method_best = {}
+        n_cached = 0
+        n_computed = 0
 
         method_data = discovered[method]
 
         if method in ("B2", "B3"):
             # Multi-setting: flatten all settings' models
             for cname, settings in method_data.items():
+                # Check cache first
+                if not args.force:
+                    cached = load_cache(args.out_dir, method, cname)
+                    if cached is not None:
+                        method_all[cname] = cached
+                        method_best[cname] = select_best_model(cached)
+                        n_cached += 1
+                        continue
+
                 gt_path = gt_files.get(cname)
                 if not gt_path:
                     continue
@@ -1380,9 +1449,20 @@ def main():
 
                 method_all[cname] = all_models
                 method_best[cname] = select_best_model(all_models)
+                save_cache(args.out_dir, method, cname, all_models)
+                n_computed += 1
         else:
             # Single-setting: list of models per complex
             for cname, models in method_data.items():
+                # Check cache first
+                if not args.force:
+                    cached = load_cache(args.out_dir, method, cname)
+                    if cached is not None:
+                        method_all[cname] = cached
+                        method_best[cname] = select_best_model(cached)
+                        n_cached += 1
+                        continue
+
                 gt_path = gt_files.get(cname)
                 if not gt_path:
                     continue
@@ -1401,9 +1481,12 @@ def main():
 
                 method_all[cname] = model_results
                 method_best[cname] = select_best_model(model_results)
+                save_cache(args.out_dir, method, cname, model_results)
+                n_computed += 1
 
         all_results[method] = method_all
         best_results[method] = method_best
+        print(f"\n  {method}: {n_computed} computed, {n_cached} from cache")
 
     # Reporting
     print(f"\n{'='*60}")
@@ -1419,26 +1502,16 @@ def main():
     write_per_complex_csv(best_results, complexes_with_results, args.out_dir)
     write_all_models_csv(all_results, args.out_dir)
 
-    # Cache raw results as JSON for reuse
-    cache_path = args.out_dir / "raw_results.json"
+    # Write aggregated raw results JSON
+    raw_path = args.out_dir / "raw_results.json"
     serializable = {}
     for method, method_results in all_results.items():
         serializable[method] = {}
         for cname, models in method_results.items():
-            serializable[method][cname] = []
-            for r in models:
-                sr = {}
-                for k, v in r.items():
-                    if isinstance(v, (np.floating, np.integer)):
-                        sr[k] = float(v)
-                    elif isinstance(v, Path):
-                        sr[k] = str(v)
-                    else:
-                        sr[k] = v
-                serializable[method][cname].append(sr)
-    with open(cache_path, "w") as f:
+            serializable[method][cname] = [_serialize_result(r) for r in models]
+    with open(raw_path, "w") as f:
         json.dump(serializable, f, indent=2, default=str)
-    print(f"Raw results cached to {cache_path}")
+    print(f"Raw results written to {raw_path}")
 
     # Plots
     if not args.skip_plots:
