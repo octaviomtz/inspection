@@ -954,4 +954,29 @@ def get_potentials(steering_args, boltz2=False):
                 }
             )
         )
+    # Add hierarchical steering coordinate-stage potentials
+    if boltz2 and steering_args.get("hierarchical_steering", False):
+        coord_start = 0.3  # default coordinate_start_fraction
+        # Coordinate potentials activate at steering_t = 1.0 - coord_start = 0.7
+        t_activate = 1.0 - coord_start
+
+        potentials.append(
+            AntigenOrientationPotential(
+                parameters={
+                    "guidance_interval": 2,
+                    "guidance_weight": PiecewiseStepFunction(
+                        thresholds=[t_activate - 0.2, t_activate],
+                        values=[1.5, 0.5, 0.0],
+                    ),
+                    "resampling_weight": PiecewiseStepFunction(
+                        thresholds=[t_activate - 0.2, t_activate],
+                        values=[1.0, 0.5, 0.0],
+                    ),
+                    "union_lambda": ExponentialInterpolation(
+                        start=8.0, end=0.0, alpha=-2.0
+                    ),
+                }
+            )
+        )
+
     return potentials

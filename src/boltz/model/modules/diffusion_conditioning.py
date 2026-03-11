@@ -117,6 +117,32 @@ class DiffusionConditioning(Module):
 
                 z = z * scaling_factor
 
+        # Apply hierarchical steering beta scaling if enabled
+        # Scales CDR-CDR intra pairs AND CDR-antigen cross pairs
+        if "hierarchical_cdr_token_mask" in feats and "hierarchical_embedding_beta" in feats:
+            cdr_mask = feats["hierarchical_cdr_token_mask"].to(z.device).to(torch.bool)
+            ag_mask = feats["hierarchical_antigen_token_mask"].to(z.device).to(torch.bool)
+            h_beta = feats["hierarchical_embedding_beta"].to(z.device)
+            h_beta_val = float(h_beta.item())
+
+            if cdr_mask.dim() == 2:
+                cdr_mask = cdr_mask.squeeze(0)
+            if ag_mask.dim() == 2:
+                ag_mask = ag_mask.squeeze(0)
+
+            if abs(h_beta_val) > 1e-6:
+                # CDR-CDR intra pairs
+                cdr_pair_mask = cdr_mask.unsqueeze(-1) & cdr_mask.unsqueeze(-2)
+                # CDR-Antigen cross pairs (both directions)
+                cross_pair_mask = (
+                    (cdr_mask.unsqueeze(-1) & ag_mask.unsqueeze(-2))
+                    | (ag_mask.unsqueeze(-1) & cdr_mask.unsqueeze(-2))
+                )
+                combined_mask = cdr_pair_mask | cross_pair_mask
+                scaling_tensor = combined_mask.unsqueeze(0).unsqueeze(-1).float()
+                scaling_factor = 1.0 + h_beta_val * scaling_tensor
+                z = z * scaling_factor
+
         q, c, p, to_keys = self.atom_encoder(
             feats=feats,
             s_trunk=s_trunk,  # Float['b n ts'],

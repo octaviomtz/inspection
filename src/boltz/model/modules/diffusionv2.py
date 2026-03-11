@@ -308,6 +308,28 @@ class AtomDiffusion(Module):
         ):
             potentials = get_potentials(steering_args, boltz2=True)
 
+        # Hierarchical steering: detect dual conditioning and setup blending schedule
+        hierarchical_mode = (
+            steering_args is not None
+            and steering_args.get("hierarchical_steering", False)
+            and "_hierarchical_steered" in network_condition_kwargs.get("diffusion_conditioning", {})
+        )
+        if hierarchical_mode:
+            from boltz.model.potentials.schedules import CosineDecaySchedule, LinearRampSchedule, PiecewiseStepFunction
+            cond_steered = network_condition_kwargs["diffusion_conditioning"]["_hierarchical_steered"]
+            cond_neutral = network_condition_kwargs["diffusion_conditioning"]["_hierarchical_neutral"]
+            feats = network_condition_kwargs["feats"]
+            embed_end = float(feats["hierarchical_embedding_end_fraction"].item())
+            schedule_type = int(feats["hierarchical_embedding_schedule_type"].item())
+            # t_end for schedule: steering_t where embedding goes to 0
+            t_end = 1.0 - embed_end
+            if schedule_type == 0:  # cosine
+                embed_schedule = CosineDecaySchedule(start_val=1.0, end_val=0.0, t_start=1.0, t_end=t_end)
+            elif schedule_type == 1:  # linear
+                embed_schedule = LinearRampSchedule(start_val=1.0, end_val=0.0, t_start=1.0, t_end=t_end)
+            else:  # step
+                embed_schedule = PiecewiseStepFunction(thresholds=[t_end], values=[1.0, 0.0])
+
         if steering_args["fk_steering"]:
             multiplicity = multiplicity * steering_args["num_particles"]
             energy_traj = torch.empty((multiplicity, 0), device=self.device)
@@ -378,6 +400,24 @@ class AtomDiffusion(Module):
             atom_coords_noisy = atom_coords + eps
 
             with torch.no_grad():
+                # Hierarchical steering: blend conditioning tensors per-step
+                if hierarchical_mode:
+                    alpha = embed_schedule.compute(steering_t)
+                    blended_conditioning = {}
+                    for key in cond_steered:
+                        if isinstance(cond_steered[key], torch.Tensor):
+                            blended_conditioning[key] = (
+                                alpha * cond_steered[key]
+                                + (1.0 - alpha) * cond_neutral[key]
+                            )
+                        else:
+                            # Non-tensor values (e.g. functools.partial) pass through
+                            blended_conditioning[key] = cond_steered[key]
+                    step_kwargs = dict(network_condition_kwargs)
+                    step_kwargs["diffusion_conditioning"] = blended_conditioning
+                else:
+                    step_kwargs = network_condition_kwargs
+
                 atom_coords_denoised = torch.zeros_like(atom_coords_noisy)
                 sample_ids = torch.arange(multiplicity).to(atom_coords_noisy.device)
                 sample_ids_chunks = sample_ids.chunk(
@@ -390,7 +430,7 @@ class AtomDiffusion(Module):
                         t_hat,
                         network_condition_kwargs=dict(
                             multiplicity=sample_ids_chunk.numel(),
-                            **network_condition_kwargs,
+                            **step_kwargs,
                         ),
                     )
                     atom_coords_denoised[sample_ids_chunk] = atom_coords_denoised_chunk

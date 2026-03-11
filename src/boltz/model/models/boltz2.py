@@ -548,6 +548,42 @@ class Boltz2(LightningModule):
                     "token_trans_bias": token_trans_bias,
                 }
 
+                # Hierarchical steering: compute neutral conditioning (no beta) for blending
+                hierarchical_mode = (
+                    self.steering_args is not None
+                    and self.steering_args.get("hierarchical_steering", False)
+                    and "hierarchical_cdr_token_mask" in feats
+                )
+                if hierarchical_mode:
+                    # Save and temporarily remove hierarchical features
+                    saved_h_feats = {}
+                    for key in list(feats.keys()):
+                        if key.startswith("hierarchical_"):
+                            saved_h_feats[key] = feats.pop(key)
+
+                    q_n, c_n, to_keys_n, ae_n, ad_n, tt_n = (
+                        self.diffusion_conditioning(
+                            s_trunk=s,
+                            z_trunk=z,
+                            relative_position_encoding=relative_position_encoding,
+                            feats=feats,
+                        )
+                    )
+                    conditioning_neutral = {
+                        "q": q_n, "c": c_n, "to_keys": to_keys_n,
+                        "atom_enc_bias": ae_n, "atom_dec_bias": ad_n,
+                        "token_trans_bias": tt_n,
+                    }
+
+                    # Restore hierarchical features
+                    feats.update(saved_h_feats)
+
+                    # Pack both conditionings for the diffusion sampler
+                    diffusion_conditioning = {
+                        "_hierarchical_steered": diffusion_conditioning,
+                        "_hierarchical_neutral": conditioning_neutral,
+                    }
+
                 with torch.autocast("cuda", enabled=False):
                     struct_out = self.structure_module.sample(
                         s_trunk=s.float(),

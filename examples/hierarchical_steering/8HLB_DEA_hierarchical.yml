@@ -1,0 +1,49 @@
+sequences:
+- protein:
+    id: A
+    sequence: TPYAPEPGSTCRLREYYDQTAQMCCSKCSPGQHAKVFCTKTSDTVCDSCEDSTYTQLWNWVPECLSCGSRCSSDQVETQACTREQNRICTCRPGWYCALSKQEGCRLCAPLR
+    msa: examples/msa_antigen_cut_new/antigen_8HLB_DEA.a3m
+- protein:
+    id: B
+    sequence: KVQLQQSGAELVKPGASVKLSCKASGYTFTESIIHWVKQRSGQGLEWIGWFYPGSDNINYNEKFKDKATLTADKSSSTVYMELTRLTSEDSAVYFCASHEGPYVYFDYWGQGTTLTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: DIVMTQSHKFMSTSVGDRVSITCKASQDVSTAVAWYQQKPGQSPKLLIYWTSTRHTGVPDRFTGSGSGTDYTLTISSVQAEDLALYYCQHHYSTPYTFGGGTKLEIQ
+    msa: empty
+
+constraints:
+  - hierarchical_steering:
+      cdr_regions:
+        - chain: B
+          start_res: 26
+          end_res: 33
+          label: CDR-H1
+        - chain: B
+          start_res: 51
+          end_res: 58
+          label: CDR-H2
+        - chain: B
+          start_res: 97
+          end_res: 108
+          label: CDR-H3
+        - chain: C
+          start_res: 27
+          end_res: 32
+          label: CDR-L1
+        - chain: C
+          start_res: 50
+          end_res: 52
+          label: CDR-L2
+        - chain: C
+          start_res: 89
+          end_res: 97
+          label: CDR-L3
+      antigen_chain: A
+      embedding_beta: 1.5
+      embedding_schedule: cosine
+      embedding_end_fraction: 0.5
+      coordinate_start_fraction: 0.3
+      contact_threshold: 8.0
+      coordinate_guidance_weight: 1.0
+      force: true

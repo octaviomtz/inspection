@@ -543,6 +543,8 @@ class InferenceOptions:
     cdr3_beta_constraints: Optional[
         list[tuple[float, list[tuple[int, int, int]]]]
     ] = None
+    # Hierarchical steering constraints: dict with cdr_regions, antigen_chain, schedule params
+    hierarchical_steering_constraints: Optional[list[dict]] = None
 
 
 @dataclass(frozen=True)

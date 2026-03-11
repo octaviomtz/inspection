@@ -1,0 +1,49 @@
+sequences:
+- protein:
+    id: A
+    sequence: LKESYLEESCSTITEGYLSVLRTGWYTNVFTLEVGDVENLTCADGPSLIKTELDLTKSALRELRTVSADQLAREEQIENPRQSRFVLGAIALGVCTAAAVTAGVAIAKTIRLESEVTAIKNALKKTNEAVSTLGNGVRVLATAVRELKDFVSKNLTRAINKNKCDIPDLKMAVSFSQFNRRFLNVVRQFSDNAGITPAISLDLMTDAELARAVSNMPTSAGQIKLMLENRAMVRRKGFGILIGVYGSSVIYMVQLPIFGVIDTPCWIVKAAPSCSEKKGNYACLLREDQGWYCQNAGSTVYYPNEKDCETRGDHVFCDTACGINVAEQSKECNINISTTNYPCKVSTGRHPISMVALSPLGALVACYKGVSCSIGSNRVGIIKQLNKGCSYITNQDADTVTIDNTVYQLSKVEG
+    msa: examples/msa_antigen_cut_new/antigen_8EAY_HLA.a3m
+- protein:
+    id: B
+    sequence: QVQLQESGPGLVKPSETLSLTCTVSGGSISNYYWNWIRQPPGKGLEWIGYFYYSGSTKYNPSLKSRVTISLDMSKNQFSLKLRSVTAADTAVYYCARGTMRESGMPDAFDIWGQGTVVTVS
+    msa: empty
+- protein:
+    id: C
+    sequence: SYELIQPPSVSVSPGQTAIITCSGNNLGNKYACWYQQKAGQSPVMIIYQDNRRPSGIPERFSGSNSGNTATLTISGTQAMDEADYYCQAWDSSVVFGGGTKLTVL
+    msa: empty
+
+constraints:
+  - hierarchical_steering:
+      cdr_regions:
+        - chain: B
+          start_res: 26
+          end_res: 33
+          label: CDR-H1
+        - chain: B
+          start_res: 51
+          end_res: 57
+          label: CDR-H2
+        - chain: B
+          start_res: 96
+          end_res: 111
+          label: CDR-H3
+        - chain: C
+          start_res: 26
+          end_res: 31
+          label: CDR-L1
+        - chain: C
+          start_res: 49
+          end_res: 51
+          label: CDR-L2
+        - chain: C
+          start_res: 88
+          end_res: 95
+          label: CDR-L3
+      antigen_chain: A
+      embedding_beta: 1.5
+      embedding_schedule: cosine
+      embedding_end_fraction: 0.5
+      coordinate_start_fraction: 0.3
+      contact_threshold: 8.0
+      coordinate_guidance_weight: 1.0
+      force: true

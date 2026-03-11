@@ -1515,6 +1515,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
     cdr3_constraints = []
     antigen_orientation_constraints = []
     cdr3_beta_constraints = []
+    hierarchical_steering_constraints = []
     constraints = schema.get("constraints", [])
     for constraint in constraints:
         if "bond" in constraint:
@@ -1701,6 +1702,66 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
 
             # Store constraint
             cdr3_beta_constraints.append((beta_value, cdr_regions))
+        elif "hierarchical_steering" in constraint:
+            if not boltz_2:
+                msg = "Hierarchical steering constraint is not supported in Boltz-1!"
+                raise ValueError(msg)
+
+            hs = constraint["hierarchical_steering"]
+
+            # Validate required fields
+            if "cdr_regions" not in hs or "antigen_chain" not in hs:
+                msg = "hierarchical_steering requires cdr_regions and antigen_chain"
+                raise ValueError(msg)
+
+            # Parse CDR regions
+            hs_cdr_regions = []
+            for region in hs["cdr_regions"]:
+                if "chain" not in region or "start_res" not in region or "end_res" not in region:
+                    msg = "Each cdr_region requires chain, start_res, and end_res"
+                    raise ValueError(msg)
+
+                cdr_chain_name = region["chain"]
+                if cdr_chain_name not in chain_to_idx:
+                    msg = f"CDR chain {cdr_chain_name} not found in input!"
+                    raise ValueError(msg)
+
+                cdr_chain_id = chain_to_idx[cdr_chain_name]
+                cdr_start = region["start_res"] - 1  # Convert to 0-indexed
+                cdr_end = region["end_res"] - 1  # Convert to 0-indexed
+                cdr_label = region.get("label", "")
+                hs_cdr_regions.append((cdr_chain_id, cdr_start, cdr_end, cdr_label))
+
+            # Parse antigen chain
+            antigen_chain_name = hs["antigen_chain"]
+            if antigen_chain_name not in chain_to_idx:
+                msg = f"Antigen chain {antigen_chain_name} not found in input!"
+                raise ValueError(msg)
+            antigen_chain_id = chain_to_idx[antigen_chain_name]
+
+            # Embedding stage parameters
+            embedding_beta = hs.get("embedding_beta", 1.5)
+            embedding_schedule = hs.get("embedding_schedule", "cosine")
+            embedding_end_fraction = hs.get("embedding_end_fraction", 0.5)
+
+            # Coordinate stage parameters
+            coordinate_start_fraction = hs.get("coordinate_start_fraction", 0.3)
+            contact_threshold = hs.get("contact_threshold", 8.0)
+            coordinate_guidance_weight = hs.get("coordinate_guidance_weight", 1.0)
+
+            force = hs.get("force", True)
+
+            hierarchical_steering_constraints.append({
+                "cdr_regions": hs_cdr_regions,
+                "antigen_chain_id": antigen_chain_id,
+                "embedding_beta": embedding_beta,
+                "embedding_schedule": embedding_schedule,
+                "embedding_end_fraction": embedding_end_fraction,
+                "coordinate_start_fraction": coordinate_start_fraction,
+                "contact_threshold": contact_threshold,
+                "coordinate_guidance_weight": coordinate_guidance_weight,
+                "force": force,
+            })
         else:
             msg = f"Invalid constraint: {constraint}"
             raise ValueError(msg)
@@ -1918,6 +1979,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
         cdr3_constraints=cdr3_constraints if cdr3_constraints else None,
         antigen_orientation_constraints=antigen_orientation_constraints if antigen_orientation_constraints else None,
         cdr3_beta_constraints=cdr3_beta_constraints if cdr3_beta_constraints else None,
+        hierarchical_steering_constraints=hierarchical_steering_constraints if hierarchical_steering_constraints else None,
     )
     record = Record(
         id=name,

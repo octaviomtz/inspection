@@ -174,6 +174,7 @@ class BoltzSteeringParams:
     contact_guidance_update: bool = True
     cdr3_steering: bool = False
     antigen_steering: bool = False
+    hierarchical_steering: bool = False
     num_gd_steps: int = 20
 
 
@@ -1003,6 +1004,12 @@ def cli() -> None:
          "Requires --use_potentials. Define using antigen_orientation constraints in YAML.",
 )
 @click.option(
+    "--hierarchical_steering",
+    is_flag=True,
+    help="Enable hierarchical steering: embedding-space (early) + coordinate-space (late). "
+         "Requires --use_potentials. Define using hierarchical_steering constraints in YAML.",
+)
+@click.option(
     "--num_particles",
     type=int,
     default=3,
@@ -1114,6 +1121,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     use_potentials: bool = False,
     cdr3_steering: bool = False,
     antigen_steering: bool = False,
+    hierarchical_steering: bool = False,
     num_particles: int = 3,
     model: Literal["boltz1", "boltz2"] = "boltz2",
     method: Optional[str] = None,
@@ -1359,6 +1367,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         steering_args.physical_guidance_update = use_potentials
         steering_args.cdr3_steering = cdr3_steering
         steering_args.antigen_steering = antigen_steering
+        steering_args.hierarchical_steering = hierarchical_steering
         steering_args.num_particles = num_particles
 
         # Validate CDR3 steering requires potentials
@@ -1369,6 +1378,11 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         # Validate antigen steering requires potentials
         if antigen_steering and not use_potentials:
             msg = "Antigen steering (--antigen_steering) requires potentials to be enabled (--use_potentials)"
+            raise click.UsageError(msg)
+
+        # Validate hierarchical steering requires potentials
+        if hierarchical_steering and not use_potentials:
+            msg = "Hierarchical steering (--hierarchical_steering) requires potentials to be enabled (--use_potentials)"
             raise click.UsageError(msg)
 
         model_cls = Boltz2 if model == "boltz2" else Boltz1

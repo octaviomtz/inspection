@@ -2403,6 +2403,117 @@ def process_cdr3_beta_constraints(
     }
 
 
+def process_hierarchical_steering_constraints(
+    data: Tokenized,
+    inference_hierarchical_constraints: list[dict],
+):
+    """Process hierarchical steering constraints.
+
+    Creates feature tensors for the hierarchical (embedding-then-coordinate)
+    steering approach.
+
+    Parameters
+    ----------
+    data : Tokenized
+        The tokenized input data.
+    inference_hierarchical_constraints : list[dict]
+        List of hierarchical steering constraint dicts containing:
+        cdr_regions, antigen_chain_id, embedding_beta, embedding_schedule,
+        embedding_end_fraction, coordinate_start_fraction, contact_threshold,
+        coordinate_guidance_weight, force.
+
+    Returns
+    -------
+    dict
+        Feature tensors for hierarchical steering.
+    """
+    token_data = data.tokens
+    num_tokens = len(token_data)
+
+    if not inference_hierarchical_constraints:
+        return {}
+
+    hs = inference_hierarchical_constraints[0]  # Use first constraint
+
+    if not hs.get("force", True):
+        return {}
+
+    # Build CDR token mask
+    cdr_token_mask = torch.zeros(num_tokens, dtype=torch.bool)
+    for cdr_chain_id, start_res, end_res, _label in hs["cdr_regions"]:
+        for idx, token in enumerate(token_data):
+            if (
+                token["asym_id"] == cdr_chain_id
+                and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+                and start_res <= token["res_idx"] <= end_res
+            ):
+                cdr_token_mask[idx] = True
+
+    # Build antigen token mask
+    antigen_token_mask = torch.zeros(num_tokens, dtype=torch.bool)
+    antigen_chain_id = hs["antigen_chain_id"]
+    for idx, token in enumerate(token_data):
+        if (
+            token["asym_id"] == antigen_chain_id
+            and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+        ):
+            antigen_token_mask[idx] = True
+
+    # Build CDR and antigen CA atom index lists (for coordinate-stage potentials)
+    cdr_atom_indices = []
+    antigen_atom_indices = []
+    for idx, token in enumerate(token_data):
+        if cdr_token_mask[idx]:
+            ca_idx = token["atom_idx"] + 1  # CA is at offset 1 (N=0, CA=1, C=2)
+            cdr_atom_indices.append(ca_idx)
+        if antigen_token_mask[idx]:
+            ca_idx = token["atom_idx"] + 1
+            antigen_atom_indices.append(ca_idx)
+
+    result = {
+        "hierarchical_cdr_token_mask": cdr_token_mask,
+        "hierarchical_antigen_token_mask": antigen_token_mask,
+        "hierarchical_embedding_beta": torch.tensor(
+            [hs["embedding_beta"]], dtype=torch.float32
+        ),
+        "hierarchical_embedding_end_fraction": torch.tensor(
+            [hs["embedding_end_fraction"]], dtype=torch.float32
+        ),
+        "hierarchical_coordinate_start_fraction": torch.tensor(
+            [hs["coordinate_start_fraction"]], dtype=torch.float32
+        ),
+        "hierarchical_contact_threshold": torch.tensor(
+            [hs["contact_threshold"]], dtype=torch.float32
+        ),
+        "hierarchical_coordinate_guidance_weight": torch.tensor(
+            [hs["coordinate_guidance_weight"]], dtype=torch.float32
+        ),
+    }
+
+    # Store embedding schedule type as an integer for tensor compatibility
+    # 0=cosine, 1=linear, 2=step
+    schedule_map = {"cosine": 0, "linear": 1, "step": 2}
+    result["hierarchical_embedding_schedule_type"] = torch.tensor(
+        [schedule_map.get(hs["embedding_schedule"], 0)], dtype=torch.long
+    )
+
+    # Antigen and CDR atom indices for coordinate-stage potentials
+    if cdr_atom_indices and antigen_atom_indices:
+        result["hierarchical_cdr_atom_indices"] = torch.tensor(
+            cdr_atom_indices, dtype=torch.long
+        )
+        result["hierarchical_antigen_atom_indices"] = torch.tensor(
+            antigen_atom_indices, dtype=torch.long
+        )
+    else:
+        result["hierarchical_cdr_atom_indices"] = torch.empty((0,), dtype=torch.long)
+        result["hierarchical_antigen_atom_indices"] = torch.empty(
+            (0,), dtype=torch.long
+        )
+
+    return result
+
+
 class Boltz2Featurizer:
     """Boltz2 featurizer."""
 
@@ -2454,6 +2565,9 @@ class Boltz2Featurizer:
         ] = None,
         inference_cdr3_beta_constraints: Optional[
             list[tuple[float, list[tuple[int, int, int]]]]
+        ] = None,
+        inference_hierarchical_steering_constraints: Optional[
+            list[dict]
         ] = None,
         compute_affinity: bool = False,
     ) -> dict[str, Tensor]:
@@ -2588,6 +2702,7 @@ class Boltz2Featurizer:
         cdr3_constraint_features = {}
         antigen_orientation_constraint_features = {}
         cdr3_beta_constraint_features = {}
+        hierarchical_steering_features = {}
         if compute_constraint_features:
             residue_constraint_features = process_residue_constraint_features(data)
             chain_constraint_features = process_chain_feature_constraints(data)
@@ -2608,6 +2723,10 @@ class Boltz2Featurizer:
                 data=data,
                 inference_cdr3_beta_constraints=inference_cdr3_beta_constraints if inference_cdr3_beta_constraints else [],
             )
+            hierarchical_steering_features = process_hierarchical_steering_constraints(
+                data=data,
+                inference_hierarchical_constraints=inference_hierarchical_steering_constraints if inference_hierarchical_steering_constraints else [],
+            )
 
         return {
             **token_features,
@@ -2623,5 +2742,6 @@ class Boltz2Featurizer:
             **cdr3_constraint_features,
             **antigen_orientation_constraint_features,
             **cdr3_beta_constraint_features,
+            **hierarchical_steering_features,
             **ligand_to_mw,
         }
