@@ -1,0 +1,28 @@
+sequences:
+- protein:
+    id: A
+    sequence: LCPFGEVFNATRFASVYAWNRKRISNCVADYSVLYNSASFSTFKCYGVSPTKLNDLCFTNVYADSFVIRGDEVRQIAPGQTGKIADYNYKLPDDFTGCVIAWNSNNLDSKVGGNYNYLYRLFRKSNLKPFERDISTEIYQAGSTPCNGVEGFNCYFPLQSYGFQPTNGVGYQPYRVVVLSFELLHAPATVCGP
+    msa: examples/msa_antigen_cut_new/antigen_8HES_HLC.a3m
+- protein:
+    id: B
+    sequence: EVQLVESGGGLVQPGGSLRLSCAASGFTFYSYWMTWVRQAPGKGLEWVANIKHDESESHYVDSVRGRFTISRDNAKNSVYLQMKGLRAEDTAVYYCARDGGYNILTAYYHAPSYWGQGTLVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: QSALTQPASVSGSPGQSITISCTGTSSDVGGYNFVSWYRQYPGKAPQLMIYDVSRRPSGDSDRFSGSKSGNTASLTISGLQAEDEAEYHCSSYTGRSPYVVFGGGTKVTVL
+    msa: empty
+
+constraints:
+  - hybrid_fk_hierarchical:
+      antigen_chain: A
+      contact_threshold: 8.0
+      transition_fraction: 0.5
+      early_beta: 0.3
+      cdr_regions:
+        - chain: B
+          start_res: 97
+          end_res: 114
+        - chain: C
+          start_res: 91
+          end_res: 101
+      force: true

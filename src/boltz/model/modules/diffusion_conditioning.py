@@ -104,6 +104,19 @@ class DiffusionConditioning(Module):
                 cdr3_mask = cdr3_mask.squeeze(0)
 
             if abs(beta_val) > 1e-6:  # Only apply if non-zero
+                # Phase-aware beta for hybrid FK+Hierarchical mode:
+                # Apply full beta in early phase, ramp down to zero in late phase
+                effective_beta = beta_val
+                if "diffusion_step_fraction" in feats and "hybrid_transition_fraction" in feats:
+                    step_frac = float(feats["diffusion_step_fraction"].item())
+                    transition = float(feats["hybrid_transition_fraction"].item())
+                    # step_frac goes from 1.0 (start) to 0.0 (end)
+                    # We want full beta when step_frac > transition, zero when step_frac < transition
+                    # Smooth ramp over 10% of steps
+                    ramp_width = 0.1
+                    phase_weight = max(0.0, min(1.0, (step_frac - transition) / ramp_width))
+                    effective_beta = beta_val * phase_weight
+
                 # Create pair mask: True for (i,j) where both i and j are in CDR3
                 # cdr3_mask shape: [n_tokens], z shape: [batch, n_tokens, n_tokens, tz]
                 cdr3_mask_i = cdr3_mask.unsqueeze(-1)  # [n_tokens, 1]
@@ -113,7 +126,7 @@ class DiffusionConditioning(Module):
                 # Apply scaling: z[CDR3] *= (1 + beta)
                 # Add batch and feature dimensions for broadcasting: [1, n_tokens, n_tokens, 1]
                 scaling_tensor = cdr3_pair_mask.unsqueeze(0).unsqueeze(-1).float()
-                scaling_factor = 1.0 + beta_val * scaling_tensor
+                scaling_factor = 1.0 + effective_beta * scaling_tensor
 
                 z = z * scaling_factor
 

@@ -548,6 +548,11 @@ class InferenceOptions:
     embedding_interface_constraints: Optional[
         list[tuple[int, float, list[tuple[int, int, int]], bool]]
     ] = None
+    # Hybrid FK+Hierarchical constraints: (antigen_chain_id, contact_threshold, cdr_regions, transition_fraction, early_beta, force)
+    # Combines beta-scaling in early phase with FK resampling in late phase
+    hybrid_fk_hierarchical_constraints: Optional[
+        list[tuple[int, float, list[tuple[int, int, int]], float, float, bool]]
+    ] = None
 
 
 @dataclass(frozen=True)

@@ -1516,6 +1516,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
     antigen_orientation_constraints = []
     cdr3_beta_constraints = []
     embedding_interface_constraints = []
+    hybrid_fk_hierarchical_constraints = []
     constraints = schema.get("constraints", [])
     for constraint in constraints:
         if "bond" in constraint:
@@ -1739,6 +1740,45 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
 
             force = embed_data.get("force", True)
             embedding_interface_constraints.append((antigen_chain_id, contact_threshold, cdr_regions, force))
+        elif "hybrid_fk_hierarchical" in constraint:
+            if not boltz_2:
+                msg = "Hybrid FK+Hierarchical constraint is not supported in Boltz-1!"
+                raise ValueError(msg)
+
+            hybrid_data = constraint["hybrid_fk_hierarchical"]
+            if "antigen_chain" not in hybrid_data or "cdr_regions" not in hybrid_data:
+                msg = "hybrid_fk_hierarchical constraint requires antigen_chain and cdr_regions"
+                raise ValueError(msg)
+
+            antigen_chain_name = hybrid_data["antigen_chain"]
+            if antigen_chain_name not in chain_to_idx:
+                msg = f"Antigen chain {antigen_chain_name} not found in input!"
+                raise ValueError(msg)
+
+            antigen_chain_id = chain_to_idx[antigen_chain_name]
+            contact_threshold = hybrid_data.get("contact_threshold", 8.0)
+            transition_fraction = hybrid_data.get("transition_fraction", 0.5)
+            early_beta = hybrid_data.get("early_beta", 0.3)
+
+            # Parse CDR regions
+            cdr_regions = []
+            for cdr_region in hybrid_data["cdr_regions"]:
+                if "chain" not in cdr_region or "start_res" not in cdr_region or "end_res" not in cdr_region:
+                    msg = "Each cdr_region requires chain, start_res, and end_res"
+                    raise ValueError(msg)
+
+                cdr_chain_name = cdr_region["chain"]
+                if cdr_chain_name not in chain_to_idx:
+                    msg = f"CDR chain {cdr_chain_name} not found in input!"
+                    raise ValueError(msg)
+
+                cdr_chain_id = chain_to_idx[cdr_chain_name]
+                cdr_start = cdr_region["start_res"] - 1  # Convert to 0-indexed
+                cdr_end = cdr_region["end_res"] - 1  # Convert to 0-indexed
+                cdr_regions.append((cdr_chain_id, cdr_start, cdr_end))
+
+            force = hybrid_data.get("force", True)
+            hybrid_fk_hierarchical_constraints.append((antigen_chain_id, contact_threshold, cdr_regions, transition_fraction, early_beta, force))
         else:
             msg = f"Invalid constraint: {constraint}"
             raise ValueError(msg)
@@ -1957,6 +1997,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
         antigen_orientation_constraints=antigen_orientation_constraints if antigen_orientation_constraints else None,
         cdr3_beta_constraints=cdr3_beta_constraints if cdr3_beta_constraints else None,
         embedding_interface_constraints=embedding_interface_constraints if embedding_interface_constraints else None,
+        hybrid_fk_hierarchical_constraints=hybrid_fk_hierarchical_constraints if hybrid_fk_hierarchical_constraints else None,
     )
     record = Record(
         id=name,

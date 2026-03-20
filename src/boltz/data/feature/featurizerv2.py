@@ -2403,6 +2403,90 @@ def process_cdr3_beta_constraints(
     }
 
 
+def process_hybrid_fk_hierarchical_constraints(
+    data: Tokenized,
+    inference_hybrid_constraints: list[tuple[int, float, list[tuple[int, int, int]], float, float, bool]],
+):
+    """Process hybrid FK+Hierarchical constraints.
+
+    Generates both antigen orientation features (for FK late phase) and
+    CDR3 beta-scaling features (for early phase), plus transition parameters.
+
+    Parameters
+    ----------
+    data : Tokenized
+        The tokenized input data.
+    inference_hybrid_constraints : list
+        List of hybrid constraints. Each tuple contains:
+        (antigen_chain_id, contact_threshold, cdr_regions, transition_fraction, early_beta, force)
+
+    Returns
+    -------
+    dict
+        Dictionary containing antigen orientation features, CDR3 beta features,
+        and hybrid transition parameters.
+    """
+    token_data = data.tokens
+    num_tokens = len(token_data)
+
+    antigen_atom_indices = []
+    cdr_atom_indices = []
+    cdr3_mask = torch.zeros(num_tokens, dtype=torch.bool)
+    threshold = 8.0
+    transition_fraction = 0.5
+    early_beta = 0.3
+
+    for antigen_chain_id, contact_threshold, cdr_regions, trans_frac, beta, force in inference_hybrid_constraints:
+        if not force:
+            continue
+
+        threshold = contact_threshold
+        transition_fraction = trans_frac
+        early_beta = beta
+
+        # Find antigen CA atoms
+        for token in token_data:
+            if (
+                token["asym_id"] == antigen_chain_id
+                and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+            ):
+                ca_idx = token["atom_idx"] + 1
+                antigen_atom_indices.append(ca_idx)
+
+        # Find CDR CA atoms and build CDR3 token mask
+        for cdr_chain_id, start_res, end_res in cdr_regions:
+            for idx, token in enumerate(token_data):
+                if (
+                    token["asym_id"] == cdr_chain_id
+                    and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+                    and start_res <= token["res_idx"] <= end_res
+                ):
+                    ca_idx = token["atom_idx"] + 1
+                    cdr_atom_indices.append(ca_idx)
+                    cdr3_mask[idx] = True
+
+    if len(antigen_atom_indices) > 0 and len(cdr_atom_indices) > 0:
+        antigen_atom_index = torch.tensor(antigen_atom_indices, dtype=torch.long)
+        cdr_atom_index = torch.tensor(cdr_atom_indices, dtype=torch.long)
+        threshold_tensor = torch.tensor([threshold], dtype=torch.float32)
+    else:
+        antigen_atom_index = torch.empty((0,), dtype=torch.long)
+        cdr_atom_index = torch.empty((0,), dtype=torch.long)
+        threshold_tensor = torch.tensor([8.0], dtype=torch.float32)
+
+    return {
+        # Antigen orientation features (for FK late phase)
+        "antigen_atom_index": antigen_atom_index,
+        "cdr_atom_index": cdr_atom_index,
+        "antigen_orientation_threshold": threshold_tensor,
+        # CDR3 beta-scaling features (for early phase)
+        "cdr3_token_mask": cdr3_mask,
+        "cdr3_beta_value": torch.tensor([early_beta], dtype=torch.float32),
+        # Hybrid transition parameters
+        "hybrid_transition_fraction": torch.tensor([transition_fraction], dtype=torch.float32),
+    }
+
+
 def process_embedding_interface_constraints(
     data: Tokenized,
     inference_embedding_interface_constraints: list[tuple[int, float, list[tuple[int, int, int]], bool]],
@@ -2544,6 +2628,9 @@ class Boltz2Featurizer:
         inference_embedding_interface_constraints: Optional[
             list[tuple[int, float, list[tuple[int, int, int]], bool]]
         ] = None,
+        inference_hybrid_fk_hierarchical_constraints: Optional[
+            list[tuple[int, float, list[tuple[int, int, int]], float, float, bool]]
+        ] = None,
         compute_affinity: bool = False,
     ) -> dict[str, Tensor]:
         """Compute features.
@@ -2678,6 +2765,7 @@ class Boltz2Featurizer:
         antigen_orientation_constraint_features = {}
         cdr3_beta_constraint_features = {}
         embedding_interface_constraint_features = {}
+        hybrid_fk_hierarchical_constraint_features = {}
         if compute_constraint_features:
             residue_constraint_features = process_residue_constraint_features(data)
             chain_constraint_features = process_chain_feature_constraints(data)
@@ -2702,6 +2790,10 @@ class Boltz2Featurizer:
                 data=data,
                 inference_embedding_interface_constraints=inference_embedding_interface_constraints if inference_embedding_interface_constraints else [],
             )
+            hybrid_fk_hierarchical_constraint_features = process_hybrid_fk_hierarchical_constraints(
+                data=data,
+                inference_hybrid_constraints=inference_hybrid_fk_hierarchical_constraints if inference_hybrid_fk_hierarchical_constraints else [],
+            )
 
         return {
             **token_features,
@@ -2718,5 +2810,6 @@ class Boltz2Featurizer:
             **antigen_orientation_constraint_features,
             **cdr3_beta_constraint_features,
             **embedding_interface_constraint_features,
+            **hybrid_fk_hierarchical_constraint_features,
             **ligand_to_mw,
         }

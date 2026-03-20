@@ -1097,4 +1097,25 @@ def get_potentials(steering_args, boltz2=False):
                 }
             )
         )
+    # Add antigen orientation potential for hybrid FK+Hierarchical mode
+    # Uses the same potential as antigen_steering but with tuned schedules for late-phase only
+    if boltz2 and steering_args.get("hybrid_fk_hierarchical", False):
+        potentials.append(
+            AntigenOrientationPotential(
+                parameters={
+                    "guidance_interval": 2,
+                    "guidance_weight": PiecewiseStepFunction(
+                        thresholds=[0.3, 0.7],
+                        values=[1.5, 1.0, 0.3]  # Strong early, weaker late
+                    ),
+                    "resampling_weight": PiecewiseStepFunction(
+                        thresholds=[0.5],
+                        values=[1.0, 0.5]  # Heavy resampling early
+                    ),
+                    "union_lambda": ExponentialInterpolation(
+                        start=8.0, end=0.0, alpha=-2.0
+                    ),
+                }
+            )
+        )
     return potentials

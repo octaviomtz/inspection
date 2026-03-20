@@ -176,6 +176,8 @@ class BoltzSteeringParams:
     antigen_steering: bool = False
     embedding_interface_steering: bool = False
     num_gd_steps: int = 20
+    hybrid_fk_hierarchical: bool = False
+    hybrid_late_particles: int = 5
 
 
 @rank_zero_only
@@ -1018,6 +1020,19 @@ def cli() -> None:
          "With steering enabled, total samples = diffusion_samples × num_particles. Default is 3.",
 )
 @click.option(
+    "--hybrid_fk_hierarchical",
+    is_flag=True,
+    help="Enable A+Y hybrid steering: CDR3 beta-scaling in early diffusion phase, "
+         "FK particle resampling with coordinate potentials in late phase. "
+         "Requires --use_potentials. Define using hybrid_fk_hierarchical constraints in YAML.",
+)
+@click.option(
+    "--hybrid_late_particles",
+    type=int,
+    default=5,
+    help="Number of FK particles for the late phase of hybrid steering. Default is 5.",
+)
+@click.option(
     "--model",
     default="boltz2",
     type=click.Choice(["boltz1", "boltz2"]),
@@ -1124,6 +1139,8 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     antigen_steering: bool = False,
     embedding_interface_steering: bool = False,
     num_particles: int = 3,
+    hybrid_fk_hierarchical: bool = False,
+    hybrid_late_particles: int = 5,
     model: Literal["boltz1", "boltz2"] = "boltz2",
     method: Optional[str] = None,
     affinity_mw_correction: Optional[bool] = False,
@@ -1370,6 +1387,8 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         steering_args.antigen_steering = antigen_steering
         steering_args.embedding_interface_steering = embedding_interface_steering
         steering_args.num_particles = num_particles
+        steering_args.hybrid_fk_hierarchical = hybrid_fk_hierarchical
+        steering_args.hybrid_late_particles = hybrid_late_particles
 
         # Validate CDR3 steering requires potentials
         if cdr3_steering and not use_potentials:
@@ -1384,6 +1403,11 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         # Validate embedding interface steering requires potentials
         if embedding_interface_steering and not use_potentials:
             msg = "Embedding interface steering (--embedding_interface_steering) requires potentials to be enabled (--use_potentials)"
+            raise click.UsageError(msg)
+
+        # Validate hybrid FK+hierarchical steering requires potentials
+        if hybrid_fk_hierarchical and not use_potentials:
+            msg = "Hybrid FK+Hierarchical steering (--hybrid_fk_hierarchical) requires potentials to be enabled (--use_potentials)"
             raise click.UsageError(msg)
 
         model_cls = Boltz2 if model == "boltz2" else Boltz1
