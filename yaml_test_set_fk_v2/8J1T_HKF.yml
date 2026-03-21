@@ -1,0 +1,38 @@
+sequences:
+- protein:
+    id: A
+    sequence: NLCPFDEVFNATRFASVYAWNRKRISNCVADYSVLYNFAPFFAFKCYGVSPTKLNDLCFTNVYADSFVIRGNEVSQIAPGQTGNIADYNYKLPDDFTGCVIAWNSNKLDSKVGGNYNYRYRLFRKSNLKPFERDISTEIYQAGNKPCNGVAGVNCYFPLQSYGFRPTYGVGHQPYRVVVLSFELLHAPATVCGP
+    msa: examples/msa_antigen_cut_new/antigen_8J1T_HKF.a3m
+- protein:
+    id: B
+    sequence: VQLVESGGGLVQPGGSLRLSCAASGLTVSSNYMNWVRQAPGKGLEWVSVFYPGGSTFYADSVRGRFTISRDNSKNTLYLQMNSLRAEDTAVYYCARDHSGHALDIWGQGTMVTVS
+    msa: empty
+- protein:
+    id: C
+    sequence: DIQMTQSPSFLSASVGDRVTITCRASQGISSYLAWYQQKPGKAPKLLIYAASTLQSGVPSRFSGSGSGTEFTLTISSLQPEDFATYYCQHLNSYPSMYTFGQGTKVDI
+    msa: empty
+
+constraints:
+  - antigen_orientation:
+      antigen_chain: A
+      contact_threshold: 8.0
+      cdr3_regions:
+        - chain: B          # Heavy chain CDR1
+          start_res: 25
+          end_res: 32
+        - chain: B          # Heavy chain CDR2
+          start_res: 50
+          end_res: 56
+        - chain: B          # Heavy chain CDR3
+          start_res: 95
+          end_res: 105
+        - chain: C          # Light chain CDR1
+          start_res: 27
+          end_res: 32
+        - chain: C          # Light chain CDR2
+          start_res: 50
+          end_res: 52
+        - chain: C          # Light chain CDR3
+          start_res: 89
+          end_res: 99
+      force: true

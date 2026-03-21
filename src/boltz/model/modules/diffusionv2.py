@@ -318,10 +318,14 @@ class AtomDiffusion(Module):
                         potential.set_embedding_weights(z_trunk, network_condition_kwargs["feats"])
 
         if steering_args["fk_steering"]:
-            multiplicity = multiplicity * steering_args["num_particles"]
+            # A+.3: Support multiple FK seeds — each seed has its own particle group
+            num_fk_seeds = steering_args.get("num_fk_seeds", 1)
+            num_particles = steering_args["num_particles"]
+            multiplicity = multiplicity * num_fk_seeds * num_particles
             energy_traj = torch.empty((multiplicity, 0), device=self.device)
+            # Shape: [batch * num_fk_seeds, num_particles] — seeds resample independently
             resample_weights = torch.ones(multiplicity, device=self.device).reshape(
-                -1, steering_args["num_particles"]
+                -1, num_particles
             )
         if (
             steering_args["physical_guidance_update"]
@@ -536,7 +540,35 @@ class AtomDiffusion(Module):
 
             atom_coords = atom_coords_next
 
-        return dict(sample_atom_coords=atom_coords, diff_token_repr=token_repr)
+        # A+.3: If multiple FK seeds, select the best seed per original sample
+        # After final particle resampling, we have [batch * diffusion_samples * num_fk_seeds] samples.
+        # Downstream expects [batch * diffusion_samples], so pick the best seed by lowest energy.
+        if (
+            steering_args is not None
+            and steering_args["fk_steering"]
+            and steering_args.get("num_fk_seeds", 1) > 1
+            and energy_traj.shape[1] > 0
+        ):
+            num_fk_seeds = steering_args["num_fk_seeds"]
+            final_energy = energy_traj[:, -1]
+            # Reshape to [batch * diffusion_samples, num_fk_seeds]
+            energy_per_seed = final_energy.reshape(-1, num_fk_seeds)
+            # Select seed with lowest energy per group
+            best_seed_idx = energy_per_seed.argmin(dim=1)  # [batch * diffusion_samples]
+            # Compute global indices
+            offsets = torch.arange(energy_per_seed.shape[0], device=self.device) * num_fk_seeds
+            best_indices = offsets + best_seed_idx
+            atom_coords = atom_coords[best_indices]
+            energy_traj = energy_traj[best_indices]
+            if token_repr is not None:
+                token_repr = token_repr[best_indices]
+
+        # A+.2: Return final FK energies for composite re-ranking
+        result = dict(sample_atom_coords=atom_coords, diff_token_repr=token_repr)
+        if steering_args is not None and steering_args["fk_steering"] and energy_traj.shape[1] > 0:
+            # Final energies: last column of energy_traj for each surviving sample
+            result["fk_energies"] = energy_traj[:, -1]
+        return result
 
     def loss_weight(self, sigma):
         return (sigma**2 + self.sigma_data**2) / ((sigma * self.sigma_data) ** 2)

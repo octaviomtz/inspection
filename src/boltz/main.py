@@ -176,6 +176,15 @@ class BoltzSteeringParams:
     antigen_steering: bool = False
     embedding_interface_steering: bool = False
     num_gd_steps: int = 20
+    # A+.1: Adaptive particle reduction
+    auto_reduce_particles: bool = False
+    fk_min_particles: int = 5
+    # A+.2: Custom re-ranking weights
+    rerank_alpha: float = 0.5
+    rerank_beta: float = 0.3
+    rerank_gamma: float = 0.2
+    # A+.3: Separate FK seeds
+    num_fk_seeds: int = 1
 
 
 @rank_zero_only
@@ -1018,6 +1027,43 @@ def cli() -> None:
          "With steering enabled, total samples = diffusion_samples × num_particles. Default is 3.",
 )
 @click.option(
+    "--auto_reduce_particles",
+    is_flag=True,
+    help="Auto-reduce particle count if GPU memory is insufficient. "
+         "Halves num_particles until it fits or reaches --fk_min_particles.",
+)
+@click.option(
+    "--fk_min_particles",
+    type=int,
+    default=5,
+    help="Minimum particle count when auto-reducing. Default is 5.",
+)
+@click.option(
+    "--num_fk_seeds",
+    type=int,
+    default=1,
+    help="Number of independent FK seed groups. Each seed resamples internally. "
+         "Total trajectories = diffusion_samples × num_fk_seeds × num_particles. Default is 1.",
+)
+@click.option(
+    "--rerank_alpha",
+    type=float,
+    default=0.5,
+    help="Weight for confidence score in composite re-ranking. Default is 0.5.",
+)
+@click.option(
+    "--rerank_beta",
+    type=float,
+    default=0.3,
+    help="Weight for steering energy (negated) in composite re-ranking. Default is 0.3.",
+)
+@click.option(
+    "--rerank_gamma",
+    type=float,
+    default=0.2,
+    help="Weight for interface pLDDT in composite re-ranking. Default is 0.2.",
+)
+@click.option(
     "--model",
     default="boltz2",
     type=click.Choice(["boltz1", "boltz2"]),
@@ -1124,6 +1170,12 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     antigen_steering: bool = False,
     embedding_interface_steering: bool = False,
     num_particles: int = 3,
+    auto_reduce_particles: bool = False,
+    fk_min_particles: int = 5,
+    num_fk_seeds: int = 1,
+    rerank_alpha: float = 0.5,
+    rerank_beta: float = 0.3,
+    rerank_gamma: float = 0.2,
     model: Literal["boltz1", "boltz2"] = "boltz2",
     method: Optional[str] = None,
     affinity_mw_correction: Optional[bool] = False,
@@ -1370,6 +1422,15 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         steering_args.antigen_steering = antigen_steering
         steering_args.embedding_interface_steering = embedding_interface_steering
         steering_args.num_particles = num_particles
+        # A+.1: Adaptive particle reduction
+        steering_args.auto_reduce_particles = auto_reduce_particles
+        steering_args.fk_min_particles = fk_min_particles
+        # A+.2: Custom re-ranking weights
+        steering_args.rerank_alpha = rerank_alpha
+        steering_args.rerank_beta = rerank_beta
+        steering_args.rerank_gamma = rerank_gamma
+        # A+.3: FK seeds
+        steering_args.num_fk_seeds = num_fk_seeds
 
         # Validate CDR3 steering requires potentials
         if cdr3_steering and not use_potentials:
@@ -1385,6 +1446,33 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         if embedding_interface_steering and not use_potentials:
             msg = "Embedding interface steering (--embedding_interface_steering) requires potentials to be enabled (--use_potentials)"
             raise click.UsageError(msg)
+
+        # A+.1: Auto-reduce particles based on GPU memory
+        if auto_reduce_particles and use_potentials and accelerator == "gpu" and torch.cuda.is_available():
+            avail_mem, total_mem = torch.cuda.mem_get_info()
+            # Rough estimate: each particle needs ~num_atoms * 3 * 4 bytes for coords
+            # plus overhead for network forward passes. Use safety factor of 100
+            # to account for activations, gradients, etc.
+            safety_factor = 100
+            estimated_atoms = 5000  # conservative estimate, will be refined at runtime
+            estimated_cost = estimated_atoms * steering_args.num_particles * 3 * 4 * safety_factor
+            original_particles = steering_args.num_particles
+            while estimated_cost > 0.8 * avail_mem and steering_args.num_particles > fk_min_particles:
+                steering_args.num_particles = max(steering_args.num_particles // 2, fk_min_particles)
+                estimated_cost = estimated_atoms * steering_args.num_particles * 3 * 4 * safety_factor
+            if steering_args.num_particles != original_particles:
+                click.echo(
+                    f"A+.1: Auto-reduced particles from {original_particles} to "
+                    f"{steering_args.num_particles} (GPU memory: {avail_mem / 1e9:.1f} GB available)"
+                )
+            # A+.4: If still at minimum and memory is very tight, fall back to beta-scaling
+            if steering_args.num_particles == fk_min_particles and estimated_cost > 0.9 * avail_mem:
+                click.echo(
+                    "A+.4: Memory too tight even for minimum particles. "
+                    "Falling back to beta-scaling (no FK particles)."
+                )
+                steering_args.fk_steering = False
+                steering_args.num_particles = 1
 
         model_cls = Boltz2 if model == "boltz2" else Boltz1
         model_module = model_cls.load_from_checkpoint(

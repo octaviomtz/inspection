@@ -1098,6 +1098,9 @@ class Boltz2(LightningModule):
                 for key in self.predict_args["keys_dict_out"]:
                     pred_dict[key] = out[key]
             pred_dict["coords"] = out["sample_atom_coords"]
+            # A+.2: Pass through FK energies for composite re-ranking
+            if "fk_energies" in out:
+                pred_dict["fk_energies"] = out["fk_energies"]
             if self.confidence_prediction:
                 # pred_dict["confidence"] = out.get("ablation_confidence", None)
                 pred_dict["pde"] = out["pde"]
@@ -1138,6 +1141,24 @@ class Boltz2(LightningModule):
                     pred_dict["affinity_probability_binary2"] = out[
                         "affinity_probability_binary2"
                     ]
+
+            # A+.2: Compute composite re-ranking score if FK energies are available
+            if "fk_energies" in pred_dict and "confidence_score" in pred_dict:
+                from boltz.analysis.reranking import composite_rerank
+
+                rerank_alpha = self.steering_args.get("rerank_alpha", 0.5)
+                rerank_beta = self.steering_args.get("rerank_beta", 0.3)
+                rerank_gamma = self.steering_args.get("rerank_gamma", 0.2)
+                interface_plddts = pred_dict.get("complex_iplddt", None)
+                pred_dict["composite_score"] = composite_rerank(
+                    confidence_scores=pred_dict["confidence_score"],
+                    fk_energies=pred_dict["fk_energies"],
+                    interface_plddts=interface_plddts,
+                    alpha=rerank_alpha,
+                    beta=rerank_beta,
+                    gamma=rerank_gamma,
+                )
+
             return pred_dict
 
         except RuntimeError as e:  # catch out of memory exceptions

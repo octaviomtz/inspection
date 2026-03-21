@@ -212,6 +212,11 @@ class BoltzWriter(BasePredictionWriter):
                         }
                         for idx1 in prediction["pair_chains_iptm"]
                     }
+                    # A+.2: Include FK steering energy in confidence summary
+                    if "fk_energies" in prediction:
+                        confidence_summary_dict["fk_energy"] = prediction["fk_energies"][model_idx].item()
+                    if "composite_score" in prediction:
+                        confidence_summary_dict["composite_score"] = prediction["composite_score"][model_idx].item()
                     with path.open("w") as f:
                         f.write(
                             json.dumps(

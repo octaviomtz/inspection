@@ -1,0 +1,38 @@
+sequences:
+- protein:
+    id: A
+    sequence: PPSTALRELIEELVNITQNQKAPLCNGSMVWSINLTAGMYCAALESLINVSGCSAIEKTQRMLSGFCPHKVSAGQFSSLHVRDTKIEVAQFVKDLLLHLKKLFREGQFN
+    msa: examples/msa_antigen_cut_new/antigen_8BLQ_ECD.a3m
+- protein:
+    id: B
+    sequence: VQLVQSGAEVKKPGASVKVSCKASGYTFTNYGLSWVRQAPGQGLEWMGWISANNGDTNYGQEFQGRVTMTTDTSTSTAYMELRSLRSDDTAVYYCARDSSSSWARWFFDLWGRGTLVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: YVLTQPPSVSVAPGKTARITCGGNIIGSKLVHWYQQKPGQAPVLVIYDDGDRPSGIPERFSGSNSGNTATLTISRVEAGDEADYYCQVWDTGSDPVVFGGGTKLTVL
+    msa: empty
+
+constraints:
+  - antigen_orientation:
+      antigen_chain: A
+      contact_threshold: 8.0
+      cdr3_regions:
+        - chain: B          # Heavy chain CDR1
+          start_res: 25
+          end_res: 32
+        - chain: B          # Heavy chain CDR2
+          start_res: 50
+          end_res: 57
+        - chain: B          # Heavy chain CDR3
+          start_res: 96
+          end_res: 110
+        - chain: C          # Light chain CDR1
+          start_res: 25
+          end_res: 30
+        - chain: C          # Light chain CDR2
+          start_res: 48
+          end_res: 50
+        - chain: C          # Light chain CDR3
+          start_res: 87
+          end_res: 97
+      force: true
