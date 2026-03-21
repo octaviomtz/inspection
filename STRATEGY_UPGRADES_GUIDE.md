@@ -1062,43 +1062,71 @@ Several upgrades above share the same underlying code change. Implement each onc
 
 ---
 
-### Implementation Priority
+### Implementation Priority (Strategy-Level)
 
-| Priority | Strategy | Change | Why First |
-|---|---|---|---|
-| 1 | L+.1 | Reduce beta to 0.1–0.15 | Zero code changes, direct L fix |
-| 2 | A+.1 | Auto particle reduction | Recovers 12 missing complexes, zero model change |
-| 3 | G+.1 / Y+.4 | Confidence-based pre-check | Eliminates regressions on easy cases |
-| 4 | G+.2 / L+.4 / Y+.1 | Time-varying beta | One implementation, fixes 3 strategies |
-| 5 | D+.1 / L+.3 | CDR-antigen pair mask | Interface-directed scaling |
-| 6 | K+.1 | Multi-config ensemble | No model change, wraps existing K |
-| 7 | Q+.1–Q+.3 | Q diversity + confidence weighting | Strengthens best epitope finder |
-| 8 | A+.2 | Composite re-ranker | Universal improvement |
-| 9 | Y+.2 | CDR3-antigen proximity potential | New potential class |
-| 10 | Y+.3 | Predicted epitope input | Requires Q output as input |
-| 11 | W+.1 | Validate embedding signal | Decision gate for W+.2 |
-| 12 | V+.1–V+.3 | Canonical target + reduced strength | V feasibility study |
-| 13 | W+.2 | Learned scoring head | Requires W+.1 validation |
-| 14 | V+.4 / W+.4 | CDR3-antigen pair targets | High complexity, research direction |
+Each strategy is implemented as a **single round** — all sub-improvements (e.g. A+.1 through A+.4) are built together in one worktree before moving to the next strategy. The table below ranks complete strategy bundles by expected impact, value, and combined complexity, considering dependencies between strategies.
+
+#### Dependency Graph
+
+```
+Q+ ──────────────────────────────────────────┐
+A+ (self-contained)                          │
+G+ ──┬── creates shared infra ──────────┐    │
+     │   (time-varying beta,            │    │
+     │    confidence pre-check)         │    │
+     │                                  ▼    ▼
+     └──────────────────────────────── Y+ (uses G+ infra + Q+ output)
+                                        │
+L+ (uses G+.2 time-varying beta,        │
+    implements per-CDR & CDR-Ag masks) ──┘
+K+ (self-contained, shares heatmap logic with Q+)
+D+ (reuses L+'s mask infrastructure)
+E+ (self-contained, parameter-level)
+V+ (research, gated by canonical embedding precomputation)
+W+ (research, gated by W+.1 signal validation)
+```
+
+#### Priority Table
+
+| Priority | Strategy | Upgrades Included | Round 1 Rank | Expected Impact | Bundle Complexity | Rationale |
+|---|---|---|---|---|---|---|
+| 1 | **Q+** | Q+.1 more R1 diversity, Q+.2 confidence-weighted contacts, Q+.3 ensemble hotspot selection, Q+.4 adaptive rounds | #5 (best epitope) | High | Low | All upgrades are script/analysis-level changes. Strengthens the best blind epitope finder. **Output feeds Y+.3** later, so must come first. Self-contained — no model code changes needed. |
+| 2 | **A+** | A+.1 OOM auto-reduction, A+.2 energy-based re-ranking, A+.3 seeds vs particles, A+.4 embedding fallback | #1 (best DockQ) | Very High | Low–Medium | Recovers the 12/47 missing complexes (25% of data). A was already the best strategy; upgrades are orchestration and one medium change (energy return threading). Creates the composite re-ranker (`reranking.py`) reusable by K+ and Y+. Self-contained. |
+| 3 | **G+** | G+.1 confidence-based pre-check, G+.2 time-varying beta, G+.3 interface model selection | #3 (+0.017 DockQ) | High | Medium | **Creates critical shared infrastructure**: (1) time-varying beta via `steering_t` injection — needed by L+.4 and Y+.1, (2) confidence pre-check — reused by Y+.4. Fixes the easy-case regression (-0.025 DockQ) that limits G and Y. Must come before L+ and Y+. |
+| 4 | **L+** | L+.1 reduce beta to 0.1–0.15, L+.2 asymmetric H3/L3 scaling, L+.3 CDR3-antigen pair mask, L+.4 time-dependent beta schedule | #4 (diversity success) | High | Low–Medium | L+.1 is a zero-code parameter change (run first as sanity check). L+.4 reuses G+.2's time-varying beta infra. L+.2 and L+.3 **implement per-CDR masks and CDR-antigen masks** — shared infrastructure also used by D+ later. Fixes the only strategy that achieved its diversity goal while eliminating its accuracy penalty. |
+| 5 | **Y+** | Y+.1 stronger early beta, Y+.2 CDR3-antigen proximity potential, Y+.3 predicted epitope input, Y+.4 orientation pre-check | #2 (only significant) | Very High | Medium–High | Most promising strategy (only significant structural result in Round 1). Depends on G+.2 (time-varying beta) and G+.1 (pre-check), both already built. Y+.3 uses Q+'s epitope output for targeted late-phase guidance. Y+.2 requires a new potential class (`CDR3AntigenProximityPotential`). Placed here because dependencies must exist first. |
+| 6 | **K+** | K+.1 multi-config ensemble, K+.2 softer beta values, K+.3 heatmap accumulation pipeline, K+.4 two-stage K→B2 pipeline | #6 (redistribution) | Medium | Low–Medium | Ensemble approach captures the union of K's sporadic wins. K+.3 heatmap pipeline shares logic with Q+.2 (already built). K+.4 converts heatmap into B2-style contact restraints — potentially closes the gap to B2 without oracle info. Self-contained. |
+| 7 | **E+** | E+.1 softer beta (0.2), E+.2 more regions (20–30), E+.3 tighter contact threshold (5–6 Å), E+.4 confidence-weighted aggregation | #10 (failed) | Low–Medium | Low | All changes are parameter/config-level or analysis-side. Low investment to test whether E can be rescued with gentler parameters. E+.4 heatmap logic already exists from K+.3/Q+.2. Risk: E may be fundamentally broken regardless of parameters. |
+| 8 | **D+** | D+.1 CDR-antigen pair beta, D+.2 per-CDR masks, D+.3 diversity-aware selection | #7 (negligible) | Low–Medium | Low | Most infrastructure already built by L+ (per-CDR masks, CDR-antigen masks). D+.3 diversity selection is a small post-processing addition. Low marginal effort, but D's base mechanism (canonical ensemble) showed minimal effect. |
+| 9 | **V+** | V+.1 canonical class embeddings, V+.2 reduced gradient (0.01–0.05), V+.3 early-only (first 30%), V+.4 CDR3-antigen pair targets | #11 (harmful) | Low | High | V was the most harmful strategy (DockQ −0.034, p=0.0004). V+.1 requires offline precomputation of canonical CDR3 embeddings via Boltz2 trunk. V+.2/V+.3 are parameter fixes (low effort). V+.4 is a research direction. Worth pursuing only after higher-priority strategies are evaluated — if Y+.1 (embedding-space via beta-scaling) proves effective, V+ may be unnecessary. |
+| 10 | **W+** | W+.1 validate embedding signal (AUC-ROC), W+.2 learned scoring head, W+.3 re-extract embeddings, W+.4 embedding→restraints pipeline | #8 (negligible) | Low | High | **Gated**: W+.1 (analysis-only) must confirm AUC-ROC > 0.60 before any further investment. If signal absent, abandon W entirely. W+.2 requires training data from B2 runs. W+.3 requires trunk re-computation during diffusion (expensive). Lowest priority — embedding norms may simply not encode binding specificity. |
+
+#### Notes on Dependencies and Shared Infrastructure
+
+- **Strategies 1–2 (Q+, A+)** are fully self-contained and can be implemented in parallel if desired.
+- **Strategy 3 (G+)** is the infrastructure gateway — it creates the time-varying beta and confidence pre-check mechanisms that strategies 4 (L+) and 5 (Y+) depend on. Must be completed before them.
+- **Strategy 4 (L+)** implements the per-CDR mask and CDR-antigen mask infrastructure. These are needed by D+ (#8), so L+ must precede D+.
+- **Strategy 5 (Y+)** is the highest-impact strategy but sits at priority 5 because it depends on G+ (infra) and benefits from Q+ (epitope output for Y+.3).
+- **Strategies 9–10 (V+, W+)** are research-gated — they should only proceed after confirming that the core embedding hypothesis holds (V+ needs canonical targets, W+ needs signal validation).
 
 ---
 
 ## Summary Table
 
-| Strategy | Upgrades | Files Changed | Complexity | Key Risk |
+| Strategy | Upgrades | Files Changed | Bundle Complexity | Key Risk |
 |---|---|---|---|---|
-| A+ | OOM fix, energy re-ranking, seeds vs particles | `main.py`, `diffusionv2.py`, new `reranking.py` | Low | Energy return path threading |
-| D+ | CDR-antigen beta, per-CDR masks, diversity selection | `featurizerv2.py`, `diffusion_conditioning.py`, `main.py` | Medium | Antigen chain detection in featurizer |
-| E+ | Softer beta, more regions, tighter threshold, confidence weighting | Config + `evaluate.py` | Low | Compute cost at 30 regions |
+| Q+ | More R1 diversity, confidence-weighted contacts, ensemble hotspots, adaptive rounds | Run script + `analysis/` | Low | Entropy threshold calibration |
+| A+ | OOM fix, energy re-ranking, seeds vs particles, embedding fallback | `main.py`, `diffusionv2.py`, new `reranking.py` | Low–Medium | Energy return path threading |
 | G+ | Conditional steering, time-varying beta, interface selection | `main.py`, `diffusionv2.py`, `diffusion_conditioning.py` | Medium | Baseline pre-check adds latency |
+| L+ | Reduce beta, asymmetric CDR, interface pairs, time schedule | `featurizerv2.py`, `diffusion_conditioning.py`, `main.py` | Low–Medium | Per-CDR mask detection accuracy |
+| Y+ | Stronger beta, proximity potential, epitope input, hard-case detect | `main.py`, `potentials.py`, `schema.py`, `featurizerv2.py` | Medium–High | New potential class + schema extension |
 | K+ | Multi-config, softer beta, heatmap, two-stage pipeline | `main.py`, new `analysis/` scripts | Low–Medium | Stage 2 YAML generation |
-| L+ | Reduce beta, asymmetric CDR, interface pairs, time schedule | Same as G+.2 + D+.1 + D+.2 | Low–Medium | Shared infra with G+/D+ |
-| Q+ | More round 1 samples, confidence weighting, adaptive rounds | Run script + `analysis/` | Low | Entropy threshold calibration |
-| V+ | Canonical targets, reduced strength, early-only, pair targets | `potentials.py`, new canonical data | Medium–High | Offline embedding precomputation |
-| W+ | Signal validation, learned head, re-extraction, restraint generation | New `analysis/` + `potentials.py` | High | Training data size for MLP |
-| Y+ | Stronger beta, proximity potential, epitope input, hard-case detect | `main.py`, `potentials.py`, `schema.py` | Medium | Shares G+.1/G+.2 infra |
+| E+ | Softer beta, more regions, tighter threshold, confidence weighting | Config + `evaluate.py` | Low | E may be fundamentally broken |
+| D+ | CDR-antigen beta, per-CDR masks, diversity selection | Reuses L+ infra + new `analysis/diversity_selection.py` | Low | Low independent impact |
+| V+ | Canonical targets, reduced strength, early-only, pair targets | `potentials.py`, new canonical data | High | Offline embedding precomputation |
+| W+ | Signal validation, learned head, re-extraction, restraint generation | New `analysis/` + `potentials.py` | High | Gated by W+.1 AUC-ROC result |
 
 ---
 
 **Document Status**: Planning phase — no code changes made
-**Last Updated**: 2026-03-18
+**Last Updated**: 2026-03-21
