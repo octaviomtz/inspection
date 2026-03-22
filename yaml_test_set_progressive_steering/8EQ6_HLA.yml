@@ -1,0 +1,27 @@
+sequences:
+- protein:
+    id: A
+    sequence: PPTFSPALLVVTEGDNATFTCSFSNTSESFVLNWYRMSPSNQTDKLAAFPEDRSQPGQDSRFRVTQLPNGRDFHMSVVRARRNDSGTYLCGAISLAPKAQIKESLRAELRVTER
+    msa: examples/msa_antigen_cut_new/antigen_8EQ6_HLA.a3m
+- protein:
+    id: B
+    sequence: QVQLVQSGAEVKKPGASVKVSCKAFGYTFTTYPIEWMRQAPGKGLEWIGNFHPYNDDTKYNEKFQGRVTLTVDKSSTTVYMELSSLRSEDTAVYYCARENYGSHGGFVYWGQGTLVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: ENQLTQSPSSLSASVGDRVTITCRASSSVISSYLHWYQQKPGKAPKLLIYSTSNLASGVPSRFSGSGSGTDYTLTISSLQPEDFATYYCQQYNSYPLTFGGGTKLEIK
+    msa: empty
+constraints:
+- progressive_steering:
+    antigen_chain: A
+    contact_threshold: 8.0
+    cdr_regions:
+    - chain: B
+      start_res: 97
+      end_res: 109
+    - chain: C
+      start_res: 90
+      end_res: 98
+    beta_max: 0.3
+    beta_schedule: linear
+    force: true

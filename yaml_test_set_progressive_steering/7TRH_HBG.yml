@@ -1,0 +1,27 @@
+sequences:
+- protein:
+    id: A
+    sequence: APLHLGKCNIAGWILGNPECESLSTASSWSYIVETPSSDNGTCYPGDFIDYEELREQLSSVSSFERFEIFPKTSSWPNHDSDKGVTAACPHAGAKSFYKNLIWLVKKGNSYPKLSKSYINDKGKEVLVLWGIHHPSTSADQQSLYQNADAYVFVGSSRYSKTFKPEIAIRPKVRDREGRMNYYWTLVEPGDKITFEATGNLVVPRYAFAMERNA
+    msa: examples/msa_antigen_cut_new/antigen_7TRH_HBG.a3m
+- protein:
+    id: B
+    sequence: EVQLVESGGGLIQPGGSLRLSCEASAFTFSSYEMNWVRQAPGKGLEWVSYITSSGSRIYYADSVKGRFTISRDNAKNSLYLQMNSLRVEDTAVYYCARLLDSIVWGEGWYYGMDVWGQGTTVTVSG
+    msa: empty
+- protein:
+    id: C
+    sequence: SYELTQSPSVSVAPGRTARITCGGNDIGLKGVHWYQQKPGQAPVLVLYDNNHRPSGIPERFSGSISGDTATLTVTRVEADDGADYFCQVWDTSSGPPHVIFGGGTKLTVL
+    msa: empty
+constraints:
+- progressive_steering:
+    antigen_chain: A
+    contact_threshold: 8.0
+    cdr_regions:
+    - chain: B
+      start_res: 97
+      end_res: 115
+    - chain: C
+      start_res: 88
+      end_res: 100
+    beta_max: 0.3
+    beta_schedule: linear
+    force: true

@@ -799,6 +799,61 @@ class AntigenOrientationPotential(FlatBottomPotential, DistancePotential):
         )
 
 
+class ProgressiveAntigenOrientationPotential(AntigenOrientationPotential):
+    """AntigenOrientationPotential that reads from progressive_steering features.
+
+    Identical to AntigenOrientationPotential but reads from progressive_antigen_atom_index,
+    progressive_cdr_atom_index, and progressive_contact_threshold instead.
+    """
+
+    def compute_args(self, feats, parameters):
+        device = feats["atom_pad_mask"].device
+
+        if "progressive_antigen_atom_index" not in feats:
+            return torch.empty([2, 0], dtype=torch.long, device=device), (
+                torch.empty([0], dtype=torch.float32, device=device),
+                None,
+                None,
+            ), None, None, None
+
+        antigen_atom_index = feats["progressive_antigen_atom_index"][0]
+        cdr_atom_index = feats["progressive_cdr_atom_index"][0]
+
+        if antigen_atom_index.shape[0] == 0 or cdr_atom_index.shape[0] == 0:
+            return torch.empty([2, 0], dtype=torch.long, device=device), (
+                torch.empty([0], dtype=torch.float32, device=device),
+                None,
+                None,
+            ), None, None, None
+
+        threshold = feats["progressive_contact_threshold"][0].item()
+
+        n_antigen = antigen_atom_index.shape[0]
+        n_cdr = cdr_atom_index.shape[0]
+
+        antigen_expanded = antigen_atom_index.unsqueeze(1).expand(-1, n_cdr).flatten()
+        cdr_expanded = cdr_atom_index.unsqueeze(0).expand(n_antigen, -1).flatten()
+
+        pair_index = torch.stack([antigen_expanded, cdr_expanded], dim=0)
+
+        union_index = torch.arange(n_antigen, device=device).unsqueeze(1).expand(-1, n_cdr).flatten()
+
+        upper_bounds = torch.full(
+            (pair_index.shape[1],), threshold, dtype=torch.float32, device=device
+        )
+        lower_bounds = None
+        k = torch.ones_like(upper_bounds)
+        negation_mask = torch.zeros(pair_index.shape[1], dtype=torch.bool, device=device)
+
+        return (
+            pair_index,
+            (k, lower_bounds, upper_bounds),
+            None,
+            None,
+            (negation_mask, union_index),
+        )
+
+
 class EmbeddingInterfacePotential(FlatBottomPotential, DistancePotential):
     """Potential that uses pair embeddings to weight distance-based interface steering.
 
@@ -1090,6 +1145,27 @@ def get_potentials(steering_args, boltz2=False):
                     "resampling_weight": PiecewiseStepFunction(
                         thresholds=[0.5],
                         values=[1.0, 0.5]  # Heavy resampling early
+                    ),
+                    "union_lambda": ExponentialInterpolation(
+                        start=8.0, end=0.0, alpha=-2.0
+                    ),
+                }
+            )
+        )
+    # Add progressive steering antigen orientation potential
+    # G+ three-phase schedule: weak early (exploration) → moderate mid → strong late (optimization)
+    if boltz2 and steering_args.get("progressive_steering", False):
+        potentials.append(
+            ProgressiveAntigenOrientationPotential(
+                parameters={
+                    "guidance_interval": 2,
+                    "guidance_weight": PiecewiseStepFunction(
+                        thresholds=[0.3, 0.7],
+                        values=[0.3, 1.0, 1.5]  # G+: weak early, moderate mid, strong late
+                    ),
+                    "resampling_weight": PiecewiseStepFunction(
+                        thresholds=[0.3, 0.7],
+                        values=[0.3, 0.7, 1.0]  # Light resampling early, heavy late
                     ),
                     "union_lambda": ExponentialInterpolation(
                         start=8.0, end=0.0, alpha=-2.0

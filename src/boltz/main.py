@@ -175,6 +175,7 @@ class BoltzSteeringParams:
     cdr3_steering: bool = False
     antigen_steering: bool = False
     embedding_interface_steering: bool = False
+    progressive_steering: bool = False
     num_gd_steps: int = 20
 
 
@@ -1011,6 +1012,14 @@ def cli() -> None:
          "Define using embedding_interface constraints in YAML.",
 )
 @click.option(
+    "--progressive_steering",
+    is_flag=True,
+    help="Enable progressive steering (Strategy G+): time-varying CDR3 beta-scaling "
+         "(high early, decaying late) combined with three-phase antigen orientation guidance "
+         "(weak→moderate→strong). Requires --use_potentials. "
+         "Define using progressive_steering constraints in YAML.",
+)
+@click.option(
     "--num_particles",
     type=int,
     default=3,
@@ -1123,6 +1132,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     cdr3_steering: bool = False,
     antigen_steering: bool = False,
     embedding_interface_steering: bool = False,
+    progressive_steering: bool = False,
     num_particles: int = 3,
     model: Literal["boltz1", "boltz2"] = "boltz2",
     method: Optional[str] = None,
@@ -1369,7 +1379,13 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         steering_args.cdr3_steering = cdr3_steering
         steering_args.antigen_steering = antigen_steering
         steering_args.embedding_interface_steering = embedding_interface_steering
+        steering_args.progressive_steering = progressive_steering
         steering_args.num_particles = num_particles
+
+        # Validate progressive steering requires potentials
+        if progressive_steering and not use_potentials:
+            msg = "Progressive steering (--progressive_steering) requires potentials to be enabled (--use_potentials)"
+            raise click.UsageError(msg)
 
         # Validate CDR3 steering requires potentials
         if cdr3_steering and not use_potentials:

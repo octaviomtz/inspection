@@ -1516,6 +1516,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
     antigen_orientation_constraints = []
     cdr3_beta_constraints = []
     embedding_interface_constraints = []
+    progressive_steering_constraints = []
     constraints = schema.get("constraints", [])
     for constraint in constraints:
         if "bond" in constraint:
@@ -1739,6 +1740,49 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
 
             force = embed_data.get("force", True)
             embedding_interface_constraints.append((antigen_chain_id, contact_threshold, cdr_regions, force))
+        elif "progressive_steering" in constraint:
+            if not boltz_2:
+                msg = "Progressive steering constraint is not supported in Boltz-1!"
+                raise ValueError(msg)
+
+            prog_data = constraint["progressive_steering"]
+            if "antigen_chain" not in prog_data or "cdr_regions" not in prog_data:
+                msg = "Progressive steering constraint requires antigen_chain and cdr_regions"
+                raise ValueError(msg)
+
+            antigen_chain_name = prog_data["antigen_chain"]
+            if antigen_chain_name not in chain_to_idx:
+                msg = f"Antigen chain {antigen_chain_name} not found in input!"
+                raise ValueError(msg)
+
+            antigen_chain_id = chain_to_idx[antigen_chain_name]
+            contact_threshold = prog_data.get("contact_threshold", 8.0)
+            beta_max = prog_data.get("beta_max", 0.3)
+            beta_schedule = prog_data.get("beta_schedule", "linear")
+
+            if beta_schedule not in ["linear", "cosine", "step"]:
+                msg = f"Invalid beta_schedule: {beta_schedule}. Must be one of: linear, cosine, step"
+                raise ValueError(msg)
+
+            # Parse CDR regions
+            cdr_regions = []
+            for cdr_region in prog_data["cdr_regions"]:
+                if "chain" not in cdr_region or "start_res" not in cdr_region or "end_res" not in cdr_region:
+                    msg = "Each cdr_region requires chain, start_res, and end_res"
+                    raise ValueError(msg)
+
+                cdr_chain_name = cdr_region["chain"]
+                if cdr_chain_name not in chain_to_idx:
+                    msg = f"CDR chain {cdr_chain_name} not found in input!"
+                    raise ValueError(msg)
+
+                cdr_chain_id = chain_to_idx[cdr_chain_name]
+                cdr_start = cdr_region["start_res"] - 1  # Convert to 0-indexed
+                cdr_end = cdr_region["end_res"] - 1  # Convert to 0-indexed
+                cdr_regions.append((cdr_chain_id, cdr_start, cdr_end))
+
+            force = prog_data.get("force", True)
+            progressive_steering_constraints.append((antigen_chain_id, contact_threshold, cdr_regions, beta_max, beta_schedule, force))
         else:
             msg = f"Invalid constraint: {constraint}"
             raise ValueError(msg)
@@ -1957,6 +2001,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
         antigen_orientation_constraints=antigen_orientation_constraints if antigen_orientation_constraints else None,
         cdr3_beta_constraints=cdr3_beta_constraints if cdr3_beta_constraints else None,
         embedding_interface_constraints=embedding_interface_constraints if embedding_interface_constraints else None,
+        progressive_steering_constraints=progressive_steering_constraints if progressive_steering_constraints else None,
     )
     record = Record(
         id=name,

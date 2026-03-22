@@ -93,7 +93,9 @@ class DiffusionConditioning(Module):
         )
 
         # Apply CDR3 beta scaling if enabled
-        if "cdr3_token_mask" in feats and "cdr3_beta_value" in feats:
+        # Skip fixed beta scaling when progressive steering is active (it handles beta per-step)
+        progressive_active = "progressive_cdr_token_mask" in feats and feats["progressive_cdr_token_mask"].any()
+        if not progressive_active and "cdr3_token_mask" in feats and "cdr3_beta_value" in feats:
             cdr3_mask = feats["cdr3_token_mask"].to(z.device).to(torch.bool)
             cdr3_beta = feats["cdr3_beta_value"].to(z.device)
             beta_val = float(cdr3_beta.item())

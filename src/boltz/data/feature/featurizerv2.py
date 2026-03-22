@@ -2489,6 +2489,93 @@ def process_embedding_interface_constraints(
     }
 
 
+def process_progressive_steering_constraints(
+    data: Tokenized,
+    inference_progressive_steering_constraints: list[tuple[int, float, list[tuple[int, int, int]], float, str, bool]],
+):
+    """Process progressive steering constraints.
+
+    Creates feature tensors for progressive (time-varying) CDR beta-scaling
+    combined with antigen orientation guidance.
+
+    Parameters
+    ----------
+    data : Tokenized
+        The tokenized input data.
+    inference_progressive_steering_constraints : list
+        List of progressive steering constraints. Each tuple contains:
+        (antigen_chain_id, contact_threshold, cdr_regions, beta_max, beta_schedule, force)
+        where cdr_regions is a list of (chain_id, start_res, end_res) tuples
+
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - progressive_cdr_token_mask: [N_tokens] boolean mask for CDR residues
+        - progressive_beta_max: scalar max beta value
+        - progressive_beta_schedule: encoded schedule type (0=linear, 1=cosine, 2=step)
+        - progressive_antigen_atom_index: [N_antigen] tensor of antigen CA atom indices
+        - progressive_cdr_atom_index: [N_cdr] tensor of CDR CA atom indices
+        - progressive_contact_threshold: scalar contact threshold
+    """
+    token_data = data.tokens
+    num_tokens = len(token_data)
+
+    cdr_mask = torch.zeros(num_tokens, dtype=torch.bool)
+    antigen_atom_indices = []
+    cdr_atom_indices = []
+    beta_max = 0.3
+    beta_schedule_str = "linear"
+    threshold = 8.0
+
+    schedule_map = {"linear": 0, "cosine": 1, "step": 2}
+
+    for antigen_chain_id, contact_threshold, cdr_regions, b_max, b_schedule, force in inference_progressive_steering_constraints:
+        if not force:
+            continue
+
+        beta_max = b_max
+        beta_schedule_str = b_schedule
+        threshold = contact_threshold
+
+        # Find antigen CA atoms
+        for idx, token in enumerate(token_data):
+            if (
+                token["asym_id"] == antigen_chain_id
+                and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+            ):
+                ca_idx = token["atom_idx"] + 1  # CA is at offset 1 (N=0, CA=1, C=2)
+                antigen_atom_indices.append(ca_idx)
+
+        # Find CDR tokens and CA atoms
+        for cdr_chain_id, start_res, end_res in cdr_regions:
+            for idx, token in enumerate(token_data):
+                if (
+                    token["asym_id"] == cdr_chain_id
+                    and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+                    and start_res <= token["res_idx"] <= end_res
+                ):
+                    cdr_mask[idx] = True
+                    ca_idx = token["atom_idx"] + 1
+                    cdr_atom_indices.append(ca_idx)
+
+    if len(antigen_atom_indices) > 0 and len(cdr_atom_indices) > 0:
+        antigen_atom_idx = torch.tensor(antigen_atom_indices, dtype=torch.long)
+        cdr_atom_idx = torch.tensor(cdr_atom_indices, dtype=torch.long)
+    else:
+        antigen_atom_idx = torch.empty((0,), dtype=torch.long)
+        cdr_atom_idx = torch.empty((0,), dtype=torch.long)
+
+    return {
+        "progressive_cdr_token_mask": cdr_mask,
+        "progressive_beta_max": torch.tensor([beta_max], dtype=torch.float32),
+        "progressive_beta_schedule": torch.tensor([schedule_map.get(beta_schedule_str, 0)], dtype=torch.long),
+        "progressive_antigen_atom_index": antigen_atom_idx,
+        "progressive_cdr_atom_index": cdr_atom_idx,
+        "progressive_contact_threshold": torch.tensor([threshold], dtype=torch.float32),
+    }
+
+
 class Boltz2Featurizer:
     """Boltz2 featurizer."""
 
@@ -2543,6 +2630,9 @@ class Boltz2Featurizer:
         ] = None,
         inference_embedding_interface_constraints: Optional[
             list[tuple[int, float, list[tuple[int, int, int]], bool]]
+        ] = None,
+        inference_progressive_steering_constraints: Optional[
+            list[tuple[int, float, list[tuple[int, int, int]], float, str, bool]]
         ] = None,
         compute_affinity: bool = False,
     ) -> dict[str, Tensor]:
@@ -2702,6 +2792,10 @@ class Boltz2Featurizer:
                 data=data,
                 inference_embedding_interface_constraints=inference_embedding_interface_constraints if inference_embedding_interface_constraints else [],
             )
+            progressive_steering_constraint_features = process_progressive_steering_constraints(
+                data=data,
+                inference_progressive_steering_constraints=inference_progressive_steering_constraints if inference_progressive_steering_constraints else [],
+            )
 
         return {
             **token_features,
@@ -2718,5 +2812,6 @@ class Boltz2Featurizer:
             **antigen_orientation_constraint_features,
             **cdr3_beta_constraint_features,
             **embedding_interface_constraint_features,
+            **progressive_steering_constraint_features,
             **ligand_to_mw,
         }

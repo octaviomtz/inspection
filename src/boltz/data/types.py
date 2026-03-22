@@ -548,6 +548,12 @@ class InferenceOptions:
     embedding_interface_constraints: Optional[
         list[tuple[int, float, list[tuple[int, int, int]], bool]]
     ] = None
+    # Progressive steering constraints: (antigen_chain_id, contact_threshold, cdr_regions, beta_max, beta_schedule, force)
+    # cdr_regions is a list of (chain_id, start_res, end_res) tuples
+    # beta_schedule is one of: "linear", "cosine", "step"
+    progressive_steering_constraints: Optional[
+        list[tuple[int, float, list[tuple[int, int, int]], float, str, bool]]
+    ] = None
 
 
 @dataclass(frozen=True)

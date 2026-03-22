@@ -1,0 +1,27 @@
+sequences:
+- protein:
+    id: A
+    sequence: TNLCPFGEVFNATRFASVYAWNRKRISNCVADYSVLYNSASFSTFKCYGVSPTKLNDLCFTNVYADSFVIRGDEVRQIAPGQTGKIADYNYKLPDDFTGCVIAWNSNNLDSKVGGNYNYLYRLFRKSNLKPFERDISTEIYQAGSTPCNGVEGFNCYFPLQSYGFQPTNGVGYQPYRVVVLSFELLHAPATVCG
+    msa: examples/msa_antigen_cut_new/antigen_8IV4_ABG.a3m
+- protein:
+    id: B
+    sequence: EVKLEESGGGLVQPGGSMKLSCAASGFTFSDAWMDWVRQSPEKGLEWVAQIRRKANNHATYYAESVKGRFTISRDDSKSSVYLQMNSLRAEDTGIYYCIRGMTYAMDFWGQGTSVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: DIVMTQFQKFMSTSVGDRVSITCKASQNVRTAVAWYQQKPGQSPKAMIYLASNRHRGVPDRFTGSGCGTDFTLTISNVQCEDLADYFCLQHRNYPLTFGGGTKLEIK
+    msa: empty
+constraints:
+- progressive_steering:
+    antigen_chain: A
+    contact_threshold: 8.0
+    cdr_regions:
+    - chain: B
+      start_res: 99
+      end_res: 108
+    - chain: C
+      start_res: 89
+      end_res: 97
+    beta_max: 0.3
+    beta_schedule: linear
+    force: true
