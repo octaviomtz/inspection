@@ -175,6 +175,7 @@ class BoltzSteeringParams:
     cdr3_steering: bool = False
     antigen_steering: bool = False
     embedding_interface_steering: bool = False
+    epitope_refinement: bool = False
     num_gd_steps: int = 20
 
 
@@ -1011,6 +1012,14 @@ def cli() -> None:
          "Define using embedding_interface constraints in YAML.",
 )
 @click.option(
+    "--epitope_refinement",
+    is_flag=True,
+    help="Enable iterative epitope refinement (Strategy Q+ v2). Runs multi-round "
+         "prediction: Round 1 (broad exploration), Round 2 (focused on hotspots), "
+         "Round 3 (final refinement). Requires --use_potentials and --antigen_steering. "
+         "Define using epitope_refinement constraints in YAML.",
+)
+@click.option(
     "--num_particles",
     type=int,
     default=3,
@@ -1123,6 +1132,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     cdr3_steering: bool = False,
     antigen_steering: bool = False,
     embedding_interface_steering: bool = False,
+    epitope_refinement: bool = False,
     num_particles: int = 3,
     model: Literal["boltz1", "boltz2"] = "boltz2",
     method: Optional[str] = None,
@@ -1369,6 +1379,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         steering_args.cdr3_steering = cdr3_steering
         steering_args.antigen_steering = antigen_steering
         steering_args.embedding_interface_steering = embedding_interface_steering
+        steering_args.epitope_refinement = epitope_refinement
         steering_args.num_particles = num_particles
 
         # Validate CDR3 steering requires potentials
@@ -1385,6 +1396,15 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         if embedding_interface_steering and not use_potentials:
             msg = "Embedding interface steering (--embedding_interface_steering) requires potentials to be enabled (--use_potentials)"
             raise click.UsageError(msg)
+
+        # Validate epitope refinement requires potentials and antigen steering
+        if epitope_refinement and not use_potentials:
+            msg = "Epitope refinement (--epitope_refinement) requires potentials to be enabled (--use_potentials)"
+            raise click.UsageError(msg)
+        if epitope_refinement and not antigen_steering:
+            # Auto-enable antigen steering for epitope refinement
+            steering_args.antigen_steering = True
+            antigen_steering = True
 
         model_cls = Boltz2 if model == "boltz2" else Boltz1
         model_module = model_cls.load_from_checkpoint(
@@ -1442,6 +1462,286 @@ def predict(  # noqa: C901, PLR0915, PLR0912
                 write_pde=write_full_pde,
                 verbose=True,
             )
+        elif epitope_refinement:
+            # Multi-round epitope refinement pipeline (Strategy Q+ v2)
+            click.echo("\nRunning iterative epitope refinement (Strategy Q+ v2)\n")
+
+            from boltz.model.steering.epitope_refinement import (
+                EpitopeRefinementConfig,
+                analyze_round_results,
+            )
+
+            def _to_cpu(obj):
+                """Recursively move tensors in a dict to CPU."""
+                if isinstance(obj, torch.Tensor):
+                    return obj.cpu()
+                elif isinstance(obj, dict):
+                    return {k: _to_cpu(v) for k, v in obj.items()}
+                elif isinstance(obj, (list, tuple)):
+                    return type(obj)(_to_cpu(v) for v in obj)
+                return obj
+
+            # Move model to appropriate device
+            if accelerator == "gpu" and torch.cuda.is_available():
+                model_device = torch.device("cuda:0")
+                model_module = model_module.to(model_device)
+            else:
+                model_device = torch.device("cpu")
+
+            # Set up data module
+            data_module.setup("predict")
+            dataloader = data_module.predict_dataloader()
+
+            for batch_idx, batch in enumerate(dataloader):
+                # Get record for output saving
+                records = batch.get("record", None)
+
+                # Move tensors to device
+                batch_device = {}
+                for k, v in batch.items():
+                    if isinstance(v, torch.Tensor):
+                        batch_device[k] = v.to(model_device)
+                    else:
+                        batch_device[k] = v
+
+                # Check if this batch has epitope refinement features
+                if "epitope_antigen_atom_index" not in batch_device:
+                    click.echo(f"  Batch {batch_idx}: No epitope refinement constraints, running normal prediction")
+                    # Fall back to normal forward pass, save results manually
+                    with torch.no_grad():
+                        pred = model_module.predict_step(batch_device, batch_idx)
+                    pred_writer.write_on_batch_end(trainer, model_module, pred, [], batch_device, batch_idx, 0)
+                    continue
+
+                config = EpitopeRefinementConfig.from_feats(batch_device)
+                click.echo(f"  Batch {batch_idx}: Epitope refinement config: "
+                           f"round1_samples={config.round1_samples}, "
+                           f"noise_scale={config.round1_noise_scale}, "
+                           f"entropy_threshold={config.entropy_threshold}")
+
+                # --- ROUND 1: Broad exploration ---
+                click.echo(f"  Round 1: Broad exploration with {config.round1_samples} samples")
+
+                # Store original antigen_atom_index for Round 1 (all antigen residues)
+                orig_antigen_atom_index = batch_device.get("antigen_atom_index", None)
+                # Also use the epitope-specific indices for contact analysis
+                epitope_ag_atom_idx = batch_device["epitope_antigen_atom_index"]
+
+                # Ensure antigen steering features are present for the potential
+                if orig_antigen_atom_index is None and epitope_ag_atom_idx is not None:
+                    # Copy epitope indices to antigen orientation features
+                    batch_device["antigen_atom_index"] = epitope_ag_atom_idx
+                    batch_device["cdr_atom_index"] = batch_device["epitope_cdr_atom_index"]
+                    batch_device["antigen_orientation_threshold"] = batch_device["epitope_contact_threshold"]
+
+                with torch.no_grad():
+                    round1_out = model_module(
+                        batch_device,
+                        recycling_steps=recycling_steps,
+                        num_sampling_steps=sampling_steps,
+                        diffusion_samples=config.round1_samples,
+                        max_parallel_samples=max_parallel_samples,
+                        run_confidence_sequentially=True,
+                    )
+
+                round1_coords = round1_out["sample_atom_coords"].cpu()  # Move to CPU to free GPU
+                round1_out_cpu = _to_cpu(round1_out)
+
+                # Compute confidence scores for each sample
+                round1_confidence = (
+                    4 * round1_out_cpu["complex_plddt"]
+                    + (round1_out_cpu["iptm"]
+                       if not torch.allclose(round1_out_cpu["iptm"], torch.zeros_like(round1_out_cpu["iptm"]))
+                       else round1_out_cpu["ptm"])
+                ) / 5
+
+                click.echo(f"    Round 1 complete: {round1_coords.shape[0]} samples, "
+                           f"mean confidence={round1_confidence.mean():.4f}")
+
+                # Free GPU memory between rounds
+                del round1_out
+                torch.cuda.empty_cache()
+
+                # Analyze Round 1 results (on CPU)
+                heatmap, hotspot_mask, entropy, should_skip_r2 = analyze_round_results(
+                    round1_coords, round1_confidence, batch_device, config,
+                )
+                n_hotspots = hotspot_mask.sum().item()
+                click.echo(f"    Hotspot analysis: {int(n_hotspots)} hotspot residues, "
+                           f"entropy={entropy:.3f}")
+
+                # Track round outputs for final selection
+                round2_out_cpu = None
+
+                # --- ROUND 2 (optional): Focused exploration ---
+                if not should_skip_r2 and n_hotspots > 0:
+                    click.echo(f"  Round 2: Focused exploration on {int(n_hotspots)} hotspot residues")
+
+                    # Focus antigen steering on hotspot residues only
+                    focused_ag_atom_idx = epitope_ag_atom_idx[0][hotspot_mask.to(epitope_ag_atom_idx.device)]
+                    batch_device["antigen_atom_index"] = focused_ag_atom_idx.unsqueeze(0)
+
+                    round2_samples = max(config.round1_samples // 2, 1)
+                    with torch.no_grad():
+                        round2_out = model_module(
+                            batch_device,
+                            recycling_steps=recycling_steps,
+                            num_sampling_steps=sampling_steps,
+                            diffusion_samples=round2_samples,
+                            max_parallel_samples=max_parallel_samples,
+                            run_confidence_sequentially=True,
+                        )
+
+                    round2_coords = round2_out["sample_atom_coords"].cpu()
+                    round2_out_cpu = _to_cpu(round2_out)
+
+                    round2_confidence = (
+                        4 * round2_out_cpu["complex_plddt"]
+                        + (round2_out_cpu["iptm"]
+                           if not torch.allclose(round2_out_cpu["iptm"], torch.zeros_like(round2_out_cpu["iptm"]))
+                           else round2_out_cpu["ptm"])
+                    ) / 5
+
+                    click.echo(f"    Round 2 complete: {round2_coords.shape[0]} samples, "
+                               f"mean confidence={round2_confidence.mean():.4f}")
+
+                    # Free GPU memory
+                    del round2_out
+                    torch.cuda.empty_cache()
+
+                    # Round 2 used focused antigen indices, so hotspot_mask2 is relative
+                    # to the full antigen set (analyze_round_results uses epitope_antigen_atom_index)
+                    # Keep the Round 1 hotspots for Round 3 (Round 2 validates, doesn't narrow further)
+                    click.echo(f"    Keeping {int(n_hotspots)} hotspot residues for Round 3")
+                else:
+                    if should_skip_r2:
+                        click.echo("  Round 2: SKIPPED (entropy below threshold - clear signal)")
+                    else:
+                        click.echo("  Round 2: SKIPPED (no hotspots found)")
+
+                # --- ROUND 3: Final refinement ---
+                click.echo("  Round 3: Final refinement")
+
+                # Focus on final hotspot set (or use all if no hotspots found)
+                if n_hotspots > 0:
+                    focused_ag_atom_idx = epitope_ag_atom_idx[0][hotspot_mask.to(epitope_ag_atom_idx.device)]
+                    batch_device["antigen_atom_index"] = focused_ag_atom_idx.unsqueeze(0)
+                elif orig_antigen_atom_index is not None:
+                    batch_device["antigen_atom_index"] = orig_antigen_atom_index
+
+                round3_samples = max(diffusion_samples, config.round1_samples // 2)
+                with torch.no_grad():
+                    round3_out = model_module(
+                        batch_device,
+                        recycling_steps=recycling_steps,
+                        num_sampling_steps=sampling_steps,
+                        diffusion_samples=round3_samples,
+                        max_parallel_samples=max_parallel_samples,
+                        run_confidence_sequentially=True,
+                    )
+
+                round3_out_cpu = _to_cpu(round3_out)
+                del round3_out
+                torch.cuda.empty_cache()
+
+                round3_confidence = (
+                    4 * round3_out_cpu["complex_plddt"]
+                    + (round3_out_cpu["iptm"]
+                       if not torch.allclose(round3_out_cpu["iptm"], torch.zeros_like(round3_out_cpu["iptm"]))
+                       else round3_out_cpu["ptm"])
+                ) / 5
+
+                click.echo(f"    Round 3 complete: {round3_out_cpu['sample_atom_coords'].shape[0]} samples, "
+                           f"mean confidence={round3_confidence.mean():.4f}")
+
+                # --- Collect best results across all rounds ---
+                # Pool all coords and confidence from all rounds
+                all_coords_list = [round1_coords]
+                all_confidence_list = [round1_confidence]
+                all_outs = [round1_out_cpu]
+
+                if round2_out_cpu is not None:
+                    all_coords_list.append(round2_coords)
+                    all_confidence_list.append(round2_confidence)
+                    all_outs.append(round2_out_cpu)
+
+                all_coords_list.append(round3_out_cpu["sample_atom_coords"])
+                all_confidence_list.append(round3_confidence)
+                all_outs.append(round3_out_cpu)
+
+                all_confidence = torch.cat(all_confidence_list, dim=0)
+
+                # Select the top diffusion_samples results by confidence
+                n_keep = min(diffusion_samples, len(all_confidence))
+                top_indices = torch.argsort(all_confidence, descending=True)[:n_keep]
+
+                # Determine which round each top sample came from
+                round_boundaries = [0]
+                for coords in all_coords_list:
+                    round_boundaries.append(round_boundaries[-1] + coords.shape[0])
+
+                # Build the final prediction dict in the format the writer expects
+                all_coords = torch.cat(all_coords_list, dim=0)
+                final_coords = all_coords[top_indices]
+
+                # Use the last round's output as template for scalar outputs
+                # and select the corresponding confidence values
+                final_pred = {"exception": False}
+                final_pred["masks"] = batch_device["atom_pad_mask"].cpu()
+                final_pred["token_masks"] = batch_device["token_pad_mask"].cpu()
+                final_pred["coords"] = final_coords
+                final_pred["s"] = round3_out_cpu["s"]
+                final_pred["z"] = round3_out_cpu["z"]
+
+                # Collect per-sample confidence metrics from the rounds
+                # For each top sample, find which round it came from and get its metrics
+                all_plddt = torch.cat([o["plddt"] for o in all_outs], dim=0)
+                all_pde = torch.cat([o["pde"] for o in all_outs], dim=0)
+                all_complex_plddt = torch.cat([o["complex_plddt"] for o in all_outs], dim=0)
+                all_complex_iplddt = torch.cat([o["complex_iplddt"] for o in all_outs], dim=0)
+                all_complex_pde = torch.cat([o["complex_pde"] for o in all_outs], dim=0)
+                all_complex_ipde = torch.cat([o["complex_ipde"] for o in all_outs], dim=0)
+
+                final_pred["plddt"] = all_plddt[top_indices]
+                final_pred["pde"] = all_pde[top_indices]
+                final_pred["confidence_score"] = all_confidence[top_indices]
+                final_pred["complex_plddt"] = all_complex_plddt[top_indices]
+                final_pred["complex_iplddt"] = all_complex_iplddt[top_indices]
+                final_pred["complex_pde"] = all_complex_pde[top_indices]
+                final_pred["complex_ipde"] = all_complex_ipde[top_indices]
+
+                # Handle PAE/PTM/iPTM if available
+                if "pae" in round3_out_cpu:
+                    all_pae = torch.cat([o["pae"] for o in all_outs], dim=0)
+                    all_ptm = torch.cat([o["ptm"] for o in all_outs], dim=0)
+                    all_iptm = torch.cat([o["iptm"] for o in all_outs], dim=0)
+                    all_ligand_iptm = torch.cat([o["ligand_iptm"] for o in all_outs], dim=0)
+                    all_protein_iptm = torch.cat([o["protein_iptm"] for o in all_outs], dim=0)
+
+                    final_pred["pae"] = all_pae[top_indices]
+                    final_pred["ptm"] = all_ptm[top_indices]
+                    final_pred["iptm"] = all_iptm[top_indices]
+                    final_pred["ligand_iptm"] = all_ligand_iptm[top_indices]
+                    final_pred["protein_iptm"] = all_protein_iptm[top_indices]
+
+                    # Pair chains iptm - select from the last round's output
+                    final_pred["pair_chains_iptm"] = {}
+                    for idx1 in round3_out_cpu["pair_chains_iptm"]:
+                        final_pred["pair_chains_iptm"][idx1] = {}
+                        for idx2 in round3_out_cpu["pair_chains_iptm"][idx1]:
+                            all_pair = torch.cat(
+                                [o["pair_chains_iptm"][idx1][idx2] for o in all_outs], dim=0
+                            )
+                            final_pred["pair_chains_iptm"][idx1][idx2] = all_pair[top_indices]
+
+                # Write the final results
+                pred_writer.write_on_batch_end(
+                    trainer, model_module, final_pred, [], batch_device, batch_idx, 0
+                )
+
+                click.echo(f"  Epitope refinement complete for batch {batch_idx}. "
+                           f"Best confidence: {all_confidence[top_indices[0]]:.4f}")
+
         else:
             # Compute structure predictions using normal forward pass
             trainer.predict(

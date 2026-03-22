@@ -2489,6 +2489,103 @@ def process_embedding_interface_constraints(
     }
 
 
+def process_epitope_refinement_constraints(
+    data: Tokenized,
+    inference_epitope_refinement_constraints: list[tuple[int, float, list[tuple[int, int, int]], bool,
+                                                         int, float, float, list[float], int]],
+):
+    """Process epitope refinement constraints.
+
+    Creates feature tensors for iterative epitope refinement (Strategy Q+).
+    Produces CDR and antigen atom/token indices for contact analysis,
+    plus Q+ parameters as tensors.
+
+    Parameters
+    ----------
+    data : Tokenized
+        The tokenized input data.
+    inference_epitope_refinement_constraints : list
+        List of epitope refinement constraints. Each tuple contains:
+        (antigen_chain_id, contact_threshold, cdr_regions, force,
+         round1_samples, round1_noise_scale, entropy_threshold,
+         hotspot_thresholds, min_consensus)
+
+    Returns
+    -------
+    dict
+        Dictionary containing atom/token indices and Q+ parameters.
+    """
+    token_data = data.tokens
+
+    antigen_atom_indices = []
+    antigen_token_indices = []
+    antigen_res_indices = []  # 0-indexed residue indices for hotspot mapping
+    cdr_atom_indices = []
+    cdr_token_indices = []
+    threshold = 8.0
+    round1_samples = 10
+    round1_noise_scale = 1.1
+    entropy_threshold = 2.0
+    hotspot_thresholds = [0.1, 0.2, 0.3]
+    min_consensus = 2
+
+    for constraint in inference_epitope_refinement_constraints:
+        (antigen_chain_id, contact_threshold, cdr_regions, force,
+         r1_samples, r1_noise, ent_thresh, hs_thresholds, min_cons) = constraint
+
+        if not force:
+            continue
+
+        threshold = contact_threshold
+        round1_samples = r1_samples
+        round1_noise_scale = r1_noise
+        entropy_threshold = ent_thresh
+        hotspot_thresholds = hs_thresholds
+        min_consensus = min_cons
+
+        # Find antigen CA atoms and token indices
+        for idx, token in enumerate(token_data):
+            if (
+                token["asym_id"] == antigen_chain_id
+                and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+            ):
+                ca_idx = token["atom_idx"] + 1  # CA is at offset 1
+                antigen_atom_indices.append(ca_idx)
+                antigen_token_indices.append(idx)
+                antigen_res_indices.append(int(token["res_idx"]))
+
+        # Find CDR CA atoms and token indices
+        for cdr_chain_id, start_res, end_res in cdr_regions:
+            for idx, token in enumerate(token_data):
+                if (
+                    token["asym_id"] == cdr_chain_id
+                    and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+                    and start_res <= token["res_idx"] <= end_res
+                ):
+                    ca_idx = token["atom_idx"] + 1
+                    cdr_atom_indices.append(ca_idx)
+                    cdr_token_indices.append(idx)
+
+    if len(antigen_atom_indices) > 0 and len(cdr_atom_indices) > 0:
+        result = {
+            "epitope_antigen_atom_index": torch.tensor(antigen_atom_indices, dtype=torch.long),
+            "epitope_cdr_atom_index": torch.tensor(cdr_atom_indices, dtype=torch.long),
+            "epitope_antigen_token_idx": torch.tensor(antigen_token_indices, dtype=torch.long),
+            "epitope_cdr_token_idx": torch.tensor(cdr_token_indices, dtype=torch.long),
+            "epitope_antigen_res_idx": torch.tensor(antigen_res_indices, dtype=torch.long),
+            "epitope_contact_threshold": torch.tensor([threshold], dtype=torch.float32),
+            "epitope_round1_samples": torch.tensor([round1_samples], dtype=torch.long),
+            "epitope_round1_noise_scale": torch.tensor([round1_noise_scale], dtype=torch.float32),
+            "epitope_entropy_threshold": torch.tensor([entropy_threshold], dtype=torch.float32),
+            "epitope_hotspot_thresholds": torch.tensor(hotspot_thresholds, dtype=torch.float32),
+            "epitope_min_consensus": torch.tensor([min_consensus], dtype=torch.long),
+        }
+    else:
+        result = {}
+
+    return result
+
+
 class Boltz2Featurizer:
     """Boltz2 featurizer."""
 
@@ -2543,6 +2640,10 @@ class Boltz2Featurizer:
         ] = None,
         inference_embedding_interface_constraints: Optional[
             list[tuple[int, float, list[tuple[int, int, int]], bool]]
+        ] = None,
+        inference_epitope_refinement_constraints: Optional[
+            list[tuple[int, float, list[tuple[int, int, int]], bool,
+                       int, float, float, list[float], int]]
         ] = None,
         compute_affinity: bool = False,
     ) -> dict[str, Tensor]:
@@ -2678,6 +2779,7 @@ class Boltz2Featurizer:
         antigen_orientation_constraint_features = {}
         cdr3_beta_constraint_features = {}
         embedding_interface_constraint_features = {}
+        epitope_refinement_constraint_features = {}
         if compute_constraint_features:
             residue_constraint_features = process_residue_constraint_features(data)
             chain_constraint_features = process_chain_feature_constraints(data)
@@ -2702,6 +2804,10 @@ class Boltz2Featurizer:
                 data=data,
                 inference_embedding_interface_constraints=inference_embedding_interface_constraints if inference_embedding_interface_constraints else [],
             )
+            epitope_refinement_constraint_features = process_epitope_refinement_constraints(
+                data=data,
+                inference_epitope_refinement_constraints=inference_epitope_refinement_constraints if inference_epitope_refinement_constraints else [],
+            )
 
         return {
             **token_features,
@@ -2718,5 +2824,6 @@ class Boltz2Featurizer:
             **antigen_orientation_constraint_features,
             **cdr3_beta_constraint_features,
             **embedding_interface_constraint_features,
+            **epitope_refinement_constraint_features,
             **ligand_to_mw,
         }

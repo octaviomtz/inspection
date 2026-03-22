@@ -548,6 +548,13 @@ class InferenceOptions:
     embedding_interface_constraints: Optional[
         list[tuple[int, float, list[tuple[int, int, int]], bool]]
     ] = None
+    # Epitope refinement constraints: (antigen_chain_id, contact_threshold, cdr_regions, force,
+    #   round1_samples, round1_noise_scale, entropy_threshold, hotspot_thresholds, min_consensus)
+    # Iterative multi-round epitope discovery with confidence-weighted contact maps
+    epitope_refinement_constraints: Optional[
+        list[tuple[int, float, list[tuple[int, int, int]], bool,
+                   int, float, float, list[float], int]]
+    ] = None
 
 
 @dataclass(frozen=True)

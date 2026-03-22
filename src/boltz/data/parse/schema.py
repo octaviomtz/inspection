@@ -1516,6 +1516,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
     antigen_orientation_constraints = []
     cdr3_beta_constraints = []
     embedding_interface_constraints = []
+    epitope_refinement_constraints = []
     constraints = schema.get("constraints", [])
     for constraint in constraints:
         if "bond" in constraint:
@@ -1739,6 +1740,53 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
 
             force = embed_data.get("force", True)
             embedding_interface_constraints.append((antigen_chain_id, contact_threshold, cdr_regions, force))
+        elif "epitope_refinement" in constraint:
+            if not boltz_2:
+                msg = "Epitope refinement constraint is not supported in Boltz-1!"
+                raise ValueError(msg)
+
+            er_data = constraint["epitope_refinement"]
+            if "antigen_chain" not in er_data or "cdr3_regions" not in er_data:
+                msg = "Epitope refinement constraint requires antigen_chain and cdr3_regions"
+                raise ValueError(msg)
+
+            antigen_chain_name = er_data["antigen_chain"]
+            if antigen_chain_name not in chain_to_idx:
+                msg = f"Antigen chain {antigen_chain_name} not found in input!"
+                raise ValueError(msg)
+
+            antigen_chain_id = chain_to_idx[antigen_chain_name]
+            contact_threshold = er_data.get("contact_threshold", 8.0)
+
+            # Parse CDR3 regions
+            cdr_regions = []
+            for cdr_region in er_data["cdr3_regions"]:
+                if "chain" not in cdr_region or "start_res" not in cdr_region or "end_res" not in cdr_region:
+                    msg = "Each cdr3_region requires chain, start_res, and end_res"
+                    raise ValueError(msg)
+
+                cdr_chain_name = cdr_region["chain"]
+                if cdr_chain_name not in chain_to_idx:
+                    msg = f"CDR chain {cdr_chain_name} not found in input!"
+                    raise ValueError(msg)
+
+                cdr_chain_id = chain_to_idx[cdr_chain_name]
+                cdr_start = cdr_region["start_res"] - 1  # Convert to 0-indexed
+                cdr_end = cdr_region["end_res"] - 1  # Convert to 0-indexed
+                cdr_regions.append((cdr_chain_id, cdr_start, cdr_end))
+
+            force = er_data.get("force", True)
+            round1_samples = er_data.get("round1_samples", 10)
+            round1_noise_scale = er_data.get("round1_noise_scale", 1.1)
+            entropy_threshold = er_data.get("entropy_threshold", 2.0)
+            hotspot_thresholds = er_data.get("hotspot_thresholds", [0.1, 0.2, 0.3])
+            min_consensus = er_data.get("min_consensus", 2)
+
+            epitope_refinement_constraints.append((
+                antigen_chain_id, contact_threshold, cdr_regions, force,
+                round1_samples, round1_noise_scale, entropy_threshold,
+                hotspot_thresholds, min_consensus
+            ))
         else:
             msg = f"Invalid constraint: {constraint}"
             raise ValueError(msg)
@@ -1957,6 +2005,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
         antigen_orientation_constraints=antigen_orientation_constraints if antigen_orientation_constraints else None,
         cdr3_beta_constraints=cdr3_beta_constraints if cdr3_beta_constraints else None,
         embedding_interface_constraints=embedding_interface_constraints if embedding_interface_constraints else None,
+        epitope_refinement_constraints=epitope_refinement_constraints if epitope_refinement_constraints else None,
     )
     record = Record(
         id=name,

@@ -1,0 +1,42 @@
+sequences:
+- protein:
+    id: A
+    sequence: LKESYLEESCSTITEGYLSVLRTGWYTNVFTLEVGDVENLTCADGPSLIKTELDLTKSALRELRTVSADQLAREEQIENPRQSRFVLGAIALGVCTAAAVTAGVAIAKTIRLESEVTAIKNALKKTNEAVSTLGNGVRVLATAVRELKDFVSKNLTRAINKNKCDIPDLKMAVSFSQFNRRFLNVVRQFSDNAGITPAISLDLMTDAELARAVSNMPTSAGQIKLMLENRAMVRRKGFGILIGVYGSSVIYMVQLPIFGVIDTPCWIVKAAPSCSEKKGNYACLLREDQGWYCQNAGSTVYYPNEKDCETRGDHVFCDTACGINVAEQSKECNINISTTNYPCKVSTGRHPISMVALSPLGALVACYKGVSCSIGSNRVGIIKQLNKGCSYITNQDADTVTIDNTVYQLSKVEG
+    msa: examples/msa_antigen_cut_new/antigen_8EAY_HLA.a3m
+- protein:
+    id: B
+    sequence: QVQLQESGPGLVKPSETLSLTCTVSGGSISNYYWNWIRQPPGKGLEWIGYFYYSGSTKYNPSLKSRVTISLDMSKNQFSLKLRSVTAADTAVYYCARGTMRESGMPDAFDIWGQGTVVTVS
+    msa: empty
+- protein:
+    id: C
+    sequence: SYELIQPPSVSVSPGQTAIITCSGNNLGNKYACWYQQKAGQSPVMIIYQDNRRPSGIPERFSGSNSGNTATLTISGTQAMDEADYYCQAWDSSVVFGGGTKLTVL
+    msa: empty
+
+constraints:
+  - epitope_refinement:
+      antigen_chain: A
+      contact_threshold: 8.0
+      cdr3_regions:
+        - chain: B
+          start_res: 96
+          end_res: 111
+        - chain: C
+          start_res: 88
+          end_res: 95
+      round1_samples: 2
+      round1_noise_scale: 1.1
+      entropy_threshold: 2.0
+      hotspot_thresholds: [0.1, 0.2, 0.3]
+      min_consensus: 2
+      force: true
+  - antigen_orientation:
+      antigen_chain: A
+      contact_threshold: 8.0
+      cdr3_regions:
+        - chain: B
+          start_res: 96
+          end_res: 111
+        - chain: C
+          start_res: 88
+          end_res: 95
+      force: true
