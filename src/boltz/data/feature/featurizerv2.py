@@ -2489,6 +2489,125 @@ def process_embedding_interface_constraints(
     }
 
 
+def process_hierarchical_steering_constraints(
+    data: Tokenized,
+    inference_hierarchical_steering_constraints: list[tuple[int, float, list[tuple[int, int, int]], float, str, Optional[list[int]], float, bool]],
+):
+    """Process hierarchical steering constraints (Strategy Y+).
+
+    Creates feature tensors for two-phase hierarchical steering:
+    - Early phase: time-varying CDR beta-scaling in embedding space
+    - Late phase: coordinate-space antigen orientation + CDR proximity potentials
+
+    Parameters
+    ----------
+    data : Tokenized
+        The tokenized input data.
+    inference_hierarchical_steering_constraints : list
+        Each tuple: (antigen_chain_id, contact_threshold, cdr_regions, beta_max,
+                      beta_schedule, epitope_residues, guidance_weight_scale, force)
+
+    Returns
+    -------
+    dict
+        Feature tensors for hierarchical steering.
+    """
+    token_data = data.tokens
+    num_tokens = len(token_data)
+
+    # Initialize
+    cdr_token_mask = torch.zeros(num_tokens, dtype=torch.bool)
+    epitope_token_mask = torch.zeros(num_tokens, dtype=torch.bool)
+    antigen_atom_indices = []
+    cdr_atom_indices = []
+    beta_max = 0.8
+    beta_schedule_int = 0  # 0=linear, 1=cosine, 2=step
+    threshold = 8.0
+    guidance_weight_scale = 1.0
+    has_epitope = False
+
+    schedule_map = {"linear": 0, "cosine": 1, "step": 2}
+
+    for (antigen_chain_id, contact_threshold, cdr_regions, b_max,
+         b_schedule, epitope_residues, gw_scale, force) in inference_hierarchical_steering_constraints:
+        if not force:
+            continue
+
+        beta_max = b_max
+        beta_schedule_int = schedule_map.get(b_schedule, 0)
+        threshold = contact_threshold
+        guidance_weight_scale = gw_scale
+
+        # Find antigen CA atoms
+        for token in token_data:
+            if (
+                token["asym_id"] == antigen_chain_id
+                and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+            ):
+                ca_idx = token["atom_idx"] + 1  # CA at offset 1 (N=0, CA=1)
+                antigen_atom_indices.append(ca_idx)
+
+        # Find CDR tokens and CA atoms
+        for cdr_chain_id, start_res, end_res in cdr_regions:
+            for idx, token in enumerate(token_data):
+                if (
+                    token["asym_id"] == cdr_chain_id
+                    and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+                    and start_res <= token["res_idx"] <= end_res
+                ):
+                    cdr_token_mask[idx] = True
+                    ca_idx = token["atom_idx"] + 1
+                    cdr_atom_indices.append(ca_idx)
+
+        # Build epitope token mask from predicted epitope residues (Y+.3)
+        if epitope_residues is not None and len(epitope_residues) > 0:
+            has_epitope = True
+            for idx, token in enumerate(token_data):
+                if (
+                    token["asym_id"] == antigen_chain_id
+                    and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+                    and token["res_idx"] in epitope_residues
+                ):
+                    epitope_token_mask[idx] = True
+
+    # Build output tensors
+    if len(antigen_atom_indices) > 0 and len(cdr_atom_indices) > 0:
+        antigen_atom_index = torch.tensor(antigen_atom_indices, dtype=torch.long)
+        cdr_atom_index = torch.tensor(cdr_atom_indices, dtype=torch.long)
+    else:
+        antigen_atom_index = torch.empty((0,), dtype=torch.long)
+        cdr_atom_index = torch.empty((0,), dtype=torch.long)
+
+    # If epitope residues were provided, also build epitope-restricted antigen atom indices
+    if has_epitope and epitope_token_mask.any():
+        epitope_atom_indices = []
+        for token in token_data:
+            if (
+                token["mol_type"] == const.chain_type_ids["PROTEIN"]
+            ):
+                # Check if this token is in the epitope mask
+                for idx_t, t in enumerate(token_data):
+                    if t is token and epitope_token_mask[idx_t]:
+                        ca_idx = token["atom_idx"] + 1
+                        epitope_atom_indices.append(ca_idx)
+                        break
+        epitope_antigen_atom_index = torch.tensor(epitope_atom_indices, dtype=torch.long) if epitope_atom_indices else torch.empty((0,), dtype=torch.long)
+    else:
+        epitope_antigen_atom_index = torch.empty((0,), dtype=torch.long)
+
+    return {
+        "hierarchical_cdr_token_mask": cdr_token_mask,
+        "hierarchical_beta_max": torch.tensor([beta_max], dtype=torch.float32),
+        "hierarchical_beta_schedule": torch.tensor([beta_schedule_int], dtype=torch.long),
+        "hierarchical_antigen_atom_index": antigen_atom_index,
+        "hierarchical_cdr_atom_index": cdr_atom_index,
+        "hierarchical_contact_threshold": torch.tensor([threshold], dtype=torch.float32),
+        "hierarchical_epitope_token_mask": epitope_token_mask,
+        "hierarchical_epitope_antigen_atom_index": epitope_antigen_atom_index,
+        "hierarchical_guidance_weight_scale": torch.tensor([guidance_weight_scale], dtype=torch.float32),
+    }
+
+
 class Boltz2Featurizer:
     """Boltz2 featurizer."""
 
@@ -2543,6 +2662,10 @@ class Boltz2Featurizer:
         ] = None,
         inference_embedding_interface_constraints: Optional[
             list[tuple[int, float, list[tuple[int, int, int]], bool]]
+        ] = None,
+        inference_hierarchical_steering_constraints: Optional[
+            list[tuple[int, float, list[tuple[int, int, int]], float, str,
+                       Optional[list[int]], float, bool]]
         ] = None,
         compute_affinity: bool = False,
     ) -> dict[str, Tensor]:
@@ -2678,6 +2801,7 @@ class Boltz2Featurizer:
         antigen_orientation_constraint_features = {}
         cdr3_beta_constraint_features = {}
         embedding_interface_constraint_features = {}
+        hierarchical_steering_constraint_features = {}
         if compute_constraint_features:
             residue_constraint_features = process_residue_constraint_features(data)
             chain_constraint_features = process_chain_feature_constraints(data)
@@ -2702,6 +2826,10 @@ class Boltz2Featurizer:
                 data=data,
                 inference_embedding_interface_constraints=inference_embedding_interface_constraints if inference_embedding_interface_constraints else [],
             )
+            hierarchical_steering_constraint_features = process_hierarchical_steering_constraints(
+                data=data,
+                inference_hierarchical_steering_constraints=inference_hierarchical_steering_constraints if inference_hierarchical_steering_constraints else [],
+            )
 
         return {
             **token_features,
@@ -2718,5 +2846,6 @@ class Boltz2Featurizer:
             **antigen_orientation_constraint_features,
             **cdr3_beta_constraint_features,
             **embedding_interface_constraint_features,
+            **hierarchical_steering_constraint_features,
             **ligand_to_mw,
         }

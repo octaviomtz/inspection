@@ -1,0 +1,29 @@
+sequences:
+- protein:
+    id: A
+    sequence: ACQEITVPLCKGIGYQYTYMPNQFNHDTQDEAGLEVHQFWPLVEIQCSPDLKFFLCSMYTPICLEDYKKPLPPCRSVCERAKAGCAPLMRQYGFAWPDRMRCDRLPEQGNPDTLCMDYN
+    msa: examples/msa_antigen_cut_new/antigen_8X0T_HLA.a3m
+- protein:
+    id: B
+    sequence: EVQLVESGGGLVQPGGSLRLSCAASGFTFSSFNMFWVRQAPGKGLEWVAGIDDDGSYPNYGSAVKGRATISRDNSKNTLYLQMNSLRAEDTAVYYCAKSGPRPPHTTYWHKSIDAWGQGTLVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: ELTQPPSVSVSPGQTARITCSGDGSWCPFCFYGWYQQKPGQAPVTLIYLNNKRPSGIPERFSGSLSGSTNTLTISGVQAEDEADYYCGSSDFRRWAFGGGTKLTVL
+    msa: empty
+
+constraints:
+  - hierarchical_steering:
+      antigen_chain: A
+      contact_threshold: 8.0
+      cdr_regions:
+        - chain: B          # Heavy chain CDR3: residues 97-115
+          start_res: 97
+          end_res: 115
+        - chain: C          # Light chain CDR3: residues 88-96
+          start_res: 88
+          end_res: 96
+      beta_max: 0.8
+      beta_schedule: linear
+      guidance_weight_scale: 1.0
+      force: true

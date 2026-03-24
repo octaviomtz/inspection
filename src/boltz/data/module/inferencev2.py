@@ -261,15 +261,16 @@ class PredictionDataset(torch.utils.data.Dataset):
         # Inference specific options
         options = record.inference_options
         if options is None:
-            pocket_constraints, contact_constraints, cdr3_constraints, antigen_orientation_constraints, cdr3_beta_constraints, embedding_interface_constraints = None, None, None, None, None, None
+            pocket_constraints, contact_constraints, cdr3_constraints, antigen_orientation_constraints, cdr3_beta_constraints, embedding_interface_constraints, hierarchical_steering_constraints = None, None, None, None, None, None, None
         else:
-            pocket_constraints, contact_constraints, cdr3_constraints, antigen_orientation_constraints, cdr3_beta_constraints, embedding_interface_constraints = (
+            pocket_constraints, contact_constraints, cdr3_constraints, antigen_orientation_constraints, cdr3_beta_constraints, embedding_interface_constraints, hierarchical_steering_constraints = (
                 options.pocket_constraints,
                 options.contact_constraints,
                 options.cdr3_constraints,
                 options.antigen_orientation_constraints,
                 options.cdr3_beta_constraints,
                 options.embedding_interface_constraints,
+                options.hierarchical_steering_constraints,
             )
 
         # Get random seed
@@ -295,6 +296,7 @@ class PredictionDataset(torch.utils.data.Dataset):
                 inference_antigen_orientation_constraints=antigen_orientation_constraints,
                 inference_cdr3_beta_constraints=cdr3_beta_constraints,
                 inference_embedding_interface_constraints=embedding_interface_constraints,
+                inference_hierarchical_steering_constraints=hierarchical_steering_constraints,
                 compute_constraint_features=True,
                 override_method=self.override_method,
                 compute_affinity=self.affinity,

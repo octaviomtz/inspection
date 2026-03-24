@@ -1,0 +1,29 @@
+sequences:
+- protein:
+    id: A
+    sequence: TNLCPFGEVFNATRFASVYAWNRKRISNCVADYSVLYNSASFSTFKCYGVSPTKLNDLCFTNVYADSFVIRGDEVRQIAPGQTGKIADYNYKLPDDFTGCVIAWNSNNLDSKVGGNYNYLYRLFRKSNLKPFERDISTEIYQAGSTPCNGVEGFNCYFPLQSYGFQPTNGVGYQPYRVVVLSFELLHAPATVCG
+    msa: examples/msa_antigen_cut_new/antigen_8IVA_CEG.a3m
+- protein:
+    id: B
+    sequence: EVQLVESGGGLVQPGGSLRLSCSASGFTFSSYAMHWVRQAPGKGLEYVSSISSNGGSTYYADSVKGRFTISRDNSKNTLYLQMSSLRVEDAAVYYCVKHYQQQLLWGGPDVWGQGTTVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: DIQMTQSPVSLSASVGDRVTITCRASQSISTWLAWYQQKPGKAPKLLIYETSSLESGVPSRFSGSGSGTEFTLTISSLQPDDFATYYCQQFNSYPWTFGQGTKVEIK
+    msa: empty
+
+constraints:
+  - hierarchical_steering:
+      antigen_chain: A
+      contact_threshold: 8.0
+      cdr_regions:
+        - chain: B          # Heavy chain CDR3: residues 97-111
+          start_res: 97
+          end_res: 111
+        - chain: C          # Light chain CDR3: residues 89-97
+          start_res: 89
+          end_res: 97
+      beta_max: 0.8
+      beta_schedule: linear
+      guidance_weight_scale: 1.0
+      force: true

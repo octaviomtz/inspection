@@ -938,12 +938,92 @@ def token_spec_to_ids(
         return chain_to_idx[chain_name], residue_index_or_atom_name - 1
 
 
+def _extract_epitope_from_pdb(
+    pdb_path: str,
+    antigen_chain: str,
+    cdr_regions: list[tuple[str, int, int]],
+    contact_threshold: float = 10.0,
+) -> list[int]:
+    """Extract epitope residues from a predicted PDB structure.
+
+    Parses the PDB file, finds antigen CA atoms that are within
+    contact_threshold of any CDR CA atom.
+
+    Parameters
+    ----------
+    pdb_path : str
+        Path to the PDB file (e.g., from Strategy Q output).
+    antigen_chain : str
+        Chain letter of the antigen (e.g., "A").
+    cdr_regions : list of (chain_letter, start_res, end_res)
+        CDR region definitions with 1-indexed residue numbers.
+    contact_threshold : float
+        Distance threshold in Angstroms for epitope definition.
+
+    Returns
+    -------
+    list[int]
+        1-indexed antigen residue numbers that are within threshold of CDR atoms.
+        Empty list if no contacts found or PDB cannot be parsed.
+
+    """
+    import math
+
+    try:
+        antigen_ca = {}  # res_num -> (x, y, z)
+        cdr_ca = []  # list of (x, y, z)
+
+        with open(pdb_path) as f:
+            for line in f:
+                if not line.startswith("ATOM"):
+                    continue
+                atom_name = line[12:16].strip()
+                if atom_name != "CA":
+                    continue
+                chain = line[21].strip()
+                res_num = int(line[22:26].strip())
+                x = float(line[30:38])
+                y = float(line[38:46])
+                z = float(line[46:54])
+
+                if chain == antigen_chain:
+                    antigen_ca[res_num] = (x, y, z)
+                else:
+                    for cdr_chain, start, end in cdr_regions:
+                        if chain == cdr_chain and start <= res_num <= end:
+                            cdr_ca.append((x, y, z))
+                            break
+
+        if not antigen_ca or not cdr_ca:
+            return []
+
+        # Find antigen residues within threshold of any CDR CA
+        epitope = []
+        for res_num, ag_coord in antigen_ca.items():
+            for cdr_coord in cdr_ca:
+                dist = math.sqrt(
+                    (ag_coord[0] - cdr_coord[0]) ** 2
+                    + (ag_coord[1] - cdr_coord[1]) ** 2
+                    + (ag_coord[2] - cdr_coord[2]) ** 2
+                )
+                if dist <= contact_threshold:
+                    epitope.append(res_num)
+                    break
+
+        return sorted(epitope)
+
+    except (OSError, ValueError) as e:
+        click.echo(f"Warning: Could not parse PDB file {pdb_path}: {e}")
+        return []
+
+
 def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
     name: str,
     schema: dict,
     ccd: Mapping[str, Mol],
     mol_dir: Optional[Path] = None,
     boltz_2: bool = False,
+    yaml_dir: Optional[Path] = None,
 ) -> Target:
     """Parse a Boltz input yaml / json.
 
@@ -1516,6 +1596,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
     antigen_orientation_constraints = []
     cdr3_beta_constraints = []
     embedding_interface_constraints = []
+    hierarchical_steering_constraints = []
     constraints = schema.get("constraints", [])
     for constraint in constraints:
         if "bond" in constraint:
@@ -1739,6 +1820,91 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
 
             force = embed_data.get("force", True)
             embedding_interface_constraints.append((antigen_chain_id, contact_threshold, cdr_regions, force))
+        elif "hierarchical_steering" in constraint:
+            if not boltz_2:
+                msg = "Hierarchical steering constraint is not supported in Boltz-1!"
+                raise ValueError(msg)
+
+            hier_data = constraint["hierarchical_steering"]
+            if "antigen_chain" not in hier_data or "cdr_regions" not in hier_data:
+                msg = "Hierarchical steering constraint requires antigen_chain and cdr_regions"
+                raise ValueError(msg)
+
+            antigen_chain_name = hier_data["antigen_chain"]
+            if antigen_chain_name not in chain_to_idx:
+                msg = f"Antigen chain {antigen_chain_name} not found in input!"
+                raise ValueError(msg)
+
+            antigen_chain_id = chain_to_idx[antigen_chain_name]
+            contact_threshold = hier_data.get("contact_threshold", 8.0)
+
+            # Parse CDR regions
+            cdr_regions = []
+            for cdr_region in hier_data["cdr_regions"]:
+                if "chain" not in cdr_region or "start_res" not in cdr_region or "end_res" not in cdr_region:
+                    msg = "Each cdr_region requires chain, start_res, and end_res"
+                    raise ValueError(msg)
+
+                cdr_chain_name = cdr_region["chain"]
+                if cdr_chain_name not in chain_to_idx:
+                    msg = f"CDR chain {cdr_chain_name} not found in input!"
+                    raise ValueError(msg)
+
+                cdr_chain_id = chain_to_idx[cdr_chain_name]
+                cdr_start = cdr_region["start_res"] - 1  # Convert to 0-indexed
+                cdr_end = cdr_region["end_res"] - 1  # Convert to 0-indexed
+                cdr_regions.append((cdr_chain_id, cdr_start, cdr_end))
+
+            beta_max = hier_data.get("beta_max", 0.8)
+            beta_schedule = hier_data.get("beta_schedule", "linear")
+            if beta_schedule not in ["linear", "cosine", "step"]:
+                msg = f"Invalid beta_schedule: {beta_schedule}. Must be one of: linear, cosine, step"
+                raise ValueError(msg)
+
+            guidance_weight_scale = hier_data.get("guidance_weight_scale", 1.0)
+            force = hier_data.get("force", True)
+
+            # Extract predicted epitope residues from PDB if provided (Y+.3)
+            epitope_residues = None
+            if "predicted_epitope_pdb" in hier_data:
+                pdb_path = hier_data["predicted_epitope_pdb"]
+                # Resolve relative paths from the YAML file location
+                if not Path(pdb_path).is_absolute():
+                    base_dir = yaml_dir if yaml_dir is not None else Path(".")
+                    pdb_path = str(base_dir / pdb_path)
+
+                epitope_threshold = hier_data.get("epitope_contact_threshold", 10.0)
+
+                # Build CDR region definitions using chain names for PDB parsing
+                cdr_defs_for_pdb = []
+                for cdr_region in hier_data["cdr_regions"]:
+                    cdr_defs_for_pdb.append((
+                        cdr_region["chain"],
+                        cdr_region["start_res"],
+                        cdr_region["end_res"],
+                    ))
+
+                epitope_residues = _extract_epitope_from_pdb(
+                    pdb_path=pdb_path,
+                    antigen_chain=antigen_chain_name,
+                    cdr_regions=cdr_defs_for_pdb,
+                    contact_threshold=epitope_threshold,
+                )
+                if epitope_residues:
+                    click.echo(
+                        f"Extracted {len(epitope_residues)} epitope residues from PDB: "
+                        f"{epitope_residues[:10]}{'...' if len(epitope_residues) > 10 else ''}"
+                    )
+                    # Convert to 0-indexed
+                    epitope_residues = [r - 1 for r in epitope_residues]
+                else:
+                    click.echo("Warning: No epitope residues found in PDB, using full antigen surface")
+                    epitope_residues = None
+
+            hierarchical_steering_constraints.append((
+                antigen_chain_id, contact_threshold, cdr_regions, beta_max,
+                beta_schedule, epitope_residues, guidance_weight_scale, force
+            ))
         else:
             msg = f"Invalid constraint: {constraint}"
             raise ValueError(msg)
@@ -1957,6 +2123,7 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
         antigen_orientation_constraints=antigen_orientation_constraints if antigen_orientation_constraints else None,
         cdr3_beta_constraints=cdr3_beta_constraints if cdr3_beta_constraints else None,
         embedding_interface_constraints=embedding_interface_constraints if embedding_interface_constraints else None,
+        hierarchical_steering_constraints=hierarchical_steering_constraints if hierarchical_steering_constraints else None,
     )
     record = Record(
         id=name,

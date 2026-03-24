@@ -922,6 +922,163 @@ class EmbeddingInterfacePotential(FlatBottomPotential, DistancePotential):
         )
 
 
+class HierarchicalAntigenOrientationPotential(AntigenOrientationPotential):
+    """Antigen orientation potential for hierarchical steering (Strategy Y+).
+
+    Reads from hierarchical_* features instead of standard antigen_* features.
+    Supports epitope focusing: if predicted epitope residues are available,
+    restricts the antigen atoms to epitope residues only (Y+.3).
+    Applies guidance_weight_scale from features for per-complex scaling (Y+.4).
+    """
+
+    def compute_args(self, feats, parameters):
+        device = feats["atom_pad_mask"].device
+
+        if "hierarchical_antigen_atom_index" not in feats:
+            return torch.empty([2, 0], dtype=torch.long, device=device), (
+                torch.empty([0], dtype=torch.float32, device=device),
+                None,
+                None,
+            ), None, None, None
+
+        # Decide whether to use epitope-restricted or full antigen atoms
+        use_epitope = (
+            "hierarchical_epitope_antigen_atom_index" in feats
+            and feats["hierarchical_epitope_antigen_atom_index"][0].shape[0] > 0
+        )
+        if use_epitope:
+            antigen_atom_index = feats["hierarchical_epitope_antigen_atom_index"][0]
+        else:
+            antigen_atom_index = feats["hierarchical_antigen_atom_index"][0]
+
+        cdr_atom_index = feats["hierarchical_cdr_atom_index"][0]
+
+        if antigen_atom_index.shape[0] == 0 or cdr_atom_index.shape[0] == 0:
+            return torch.empty([2, 0], dtype=torch.long, device=device), (
+                torch.empty([0], dtype=torch.float32, device=device),
+                None,
+                None,
+            ), None, None, None
+
+        threshold = feats["hierarchical_contact_threshold"][0].item()
+
+        n_antigen = antigen_atom_index.shape[0]
+        n_cdr = cdr_atom_index.shape[0]
+
+        antigen_expanded = antigen_atom_index.unsqueeze(1).expand(-1, n_cdr).flatten()
+        cdr_expanded = cdr_atom_index.unsqueeze(0).expand(n_antigen, -1).flatten()
+
+        pair_index = torch.stack([antigen_expanded, cdr_expanded], dim=0)
+
+        union_index = torch.arange(n_antigen, device=device).unsqueeze(1).expand(-1, n_cdr).flatten()
+
+        upper_bounds = torch.full(
+            (pair_index.shape[1],), threshold, dtype=torch.float32, device=device
+        )
+        lower_bounds = None
+        k = torch.ones_like(upper_bounds)
+        negation_mask = torch.zeros(pair_index.shape[1], dtype=torch.bool, device=device)
+
+        return (
+            pair_index,
+            (k, lower_bounds, upper_bounds),
+            None,
+            None,
+            (negation_mask, union_index),
+        )
+
+    def compute(self, coords, feats, parameters):
+        """Compute energy with guidance_weight_scale applied (Y+.4)."""
+        energy = super().compute(coords, feats, parameters)
+        if "hierarchical_guidance_weight_scale" in feats:
+            scale = float(feats["hierarchical_guidance_weight_scale"][0].item())
+            energy = energy * scale
+        return energy
+
+    def compute_gradient(self, coords, feats, parameters):
+        """Compute gradient with guidance_weight_scale applied (Y+.4)."""
+        gradient = super().compute_gradient(coords, feats, parameters)
+        if "hierarchical_guidance_weight_scale" in feats:
+            scale = float(feats["hierarchical_guidance_weight_scale"][0].item())
+            gradient = gradient * scale
+        return gradient
+
+
+class CDR3AntigenProximityPotential(AntigenOrientationPotential):
+    """Potential to directly penalize large CDR-antigen distances in late phase (Y+.2).
+
+    Similar to AntigenOrientationPotential but reads from hierarchical features
+    and uses a tighter threshold. Only active in the late phase of diffusion.
+    """
+
+    def compute_args(self, feats, parameters):
+        device = feats["atom_pad_mask"].device
+
+        if "hierarchical_cdr_atom_index" not in feats:
+            return torch.empty([2, 0], dtype=torch.long, device=device), (
+                torch.empty([0], dtype=torch.float32, device=device),
+                None,
+                None,
+            ), None, None, None
+
+        antigen_atom_index = feats["hierarchical_antigen_atom_index"][0]
+        cdr_atom_index = feats["hierarchical_cdr_atom_index"][0]
+
+        if antigen_atom_index.shape[0] == 0 or cdr_atom_index.shape[0] == 0:
+            return torch.empty([2, 0], dtype=torch.long, device=device), (
+                torch.empty([0], dtype=torch.float32, device=device),
+                None,
+                None,
+            ), None, None, None
+
+        # Use a tighter threshold than the orientation potential
+        threshold = feats["hierarchical_contact_threshold"][0].item()
+        proximity_threshold = min(threshold, 10.0)
+
+        n_antigen = antigen_atom_index.shape[0]
+        n_cdr = cdr_atom_index.shape[0]
+
+        # Reversed pair order: CDR -> antigen (penalize CDR being far from antigen)
+        cdr_expanded = cdr_atom_index.unsqueeze(1).expand(-1, n_antigen).flatten()
+        antigen_expanded = antigen_atom_index.unsqueeze(0).expand(n_cdr, -1).flatten()
+
+        pair_index = torch.stack([cdr_expanded, antigen_expanded], dim=0)
+
+        # Union index groups by CDR atom (each CDR atom should be near SOME antigen atom)
+        union_index = torch.arange(n_cdr, device=device).unsqueeze(1).expand(-1, n_antigen).flatten()
+
+        upper_bounds = torch.full(
+            (pair_index.shape[1],), proximity_threshold, dtype=torch.float32, device=device
+        )
+        lower_bounds = None
+        k = torch.ones_like(upper_bounds)
+        negation_mask = torch.zeros(pair_index.shape[1], dtype=torch.bool, device=device)
+
+        return (
+            pair_index,
+            (k, lower_bounds, upper_bounds),
+            None,
+            None,
+            (negation_mask, union_index),
+        )
+
+    def compute(self, coords, feats, parameters):
+        """Compute energy with guidance_weight_scale applied."""
+        energy = super().compute(coords, feats, parameters)
+        if "hierarchical_guidance_weight_scale" in feats:
+            scale = float(feats["hierarchical_guidance_weight_scale"][0].item())
+            energy = energy * scale
+        return energy
+
+    def compute_gradient(self, coords, feats, parameters):
+        """Compute gradient with guidance_weight_scale applied."""
+        gradient = super().compute_gradient(coords, feats, parameters)
+        if "hierarchical_guidance_weight_scale" in feats:
+            scale = float(feats["hierarchical_guidance_weight_scale"][0].item())
+            gradient = gradient * scale
+        return gradient
+
+
 def get_potentials(steering_args, boltz2=False):
     potentials = []
     if steering_args["fk_steering"] or steering_args["physical_guidance_update"]:
@@ -1090,6 +1247,49 @@ def get_potentials(steering_args, boltz2=False):
                     "resampling_weight": PiecewiseStepFunction(
                         thresholds=[0.5],
                         values=[1.0, 0.5]  # Heavy resampling early
+                    ),
+                    "union_lambda": ExponentialInterpolation(
+                        start=8.0, end=0.0, alpha=-2.0
+                    ),
+                }
+            )
+        )
+    # Add hierarchical steering potentials (Strategy Y+)
+    if boltz2 and steering_args.get("hierarchical_steering", False):
+        # Y+.2: Antigen orientation potential — zero in early phase, strong in late phase
+        # This is the inverse of standard antigen_steering which is strong early.
+        # Early phase is handled by beta-scaling (Y+.1), late phase by coordinate potentials.
+        potentials.append(
+            HierarchicalAntigenOrientationPotential(
+                parameters={
+                    "guidance_interval": 2,
+                    "guidance_weight": PiecewiseStepFunction(
+                        thresholds=[0.5],
+                        values=[0.0, 1.5]  # Zero early (t>0.5), strong late (t<=0.5)
+                    ),
+                    "resampling_weight": PiecewiseStepFunction(
+                        thresholds=[0.5],
+                        values=[0.0, 1.0]  # Zero early, full late
+                    ),
+                    "union_lambda": ExponentialInterpolation(
+                        start=8.0, end=0.0, alpha=-2.0
+                    ),
+                }
+            )
+        )
+        # Y+.2: CDR-antigen proximity potential — only active in late phase
+        # Directly penalizes CDR residues being far from antigen
+        potentials.append(
+            CDR3AntigenProximityPotential(
+                parameters={
+                    "guidance_interval": 2,
+                    "guidance_weight": PiecewiseStepFunction(
+                        thresholds=[0.4],
+                        values=[0.0, 0.8]  # Only active in late phase (t<=0.4)
+                    ),
+                    "resampling_weight": PiecewiseStepFunction(
+                        thresholds=[0.4],
+                        values=[0.0, 0.5]
                     ),
                     "union_lambda": ExponentialInterpolation(
                         start=8.0, end=0.0, alpha=-2.0

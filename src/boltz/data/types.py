@@ -548,6 +548,16 @@ class InferenceOptions:
     embedding_interface_constraints: Optional[
         list[tuple[int, float, list[tuple[int, int, int]], bool]]
     ] = None
+    # Hierarchical steering constraints (Strategy Y+):
+    # (antigen_chain_id, contact_threshold, cdr_regions, beta_max, beta_schedule,
+    #  epitope_residues, guidance_weight_scale, force)
+    # cdr_regions is a list of (chain_id, start_res, end_res) tuples
+    # beta_schedule is one of: "linear", "cosine", "step"
+    # epitope_residues is an optional list of 0-indexed antigen residue indices (from Q's PDB output)
+    hierarchical_steering_constraints: Optional[
+        list[tuple[int, float, list[tuple[int, int, int]], float, str,
+                   Optional[list[int]], float, bool]]
+    ] = None
 
 
 @dataclass(frozen=True)

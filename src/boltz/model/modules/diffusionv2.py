@@ -386,6 +386,46 @@ class AtomDiffusion(Module):
             eps = sqrt(noise_var) * torch.randn(shape, device=self.device)
             atom_coords_noisy = atom_coords + eps
 
+            # Apply hierarchical time-varying CDR beta scaling to token_trans_bias (Y+.1)
+            hierarchical_bias_applied = False
+            original_token_trans_bias = None
+            feats = network_condition_kwargs["feats"]
+
+            if (
+                steering_args is not None
+                and steering_args.get("hierarchical_steering", False)
+                and "hierarchical_cdr_token_mask" in feats
+                and feats["hierarchical_cdr_token_mask"].any()
+            ):
+                cdr_mask = feats["hierarchical_cdr_token_mask"].to(self.device).to(torch.bool)
+                beta_max = float(feats["hierarchical_beta_max"].item())
+                schedule_type = int(feats["hierarchical_beta_schedule"].item())
+
+                if cdr_mask.dim() == 2:
+                    cdr_mask = cdr_mask.squeeze(0)
+
+                # Compute time-varying beta based on schedule
+                # steering_t goes from 1.0 (start/early) to 0.0 (end/late)
+                if schedule_type == 0:  # linear: high at start, zero at end
+                    beta_t = beta_max * steering_t
+                elif schedule_type == 1:  # cosine: smooth decay
+                    import math
+                    beta_t = beta_max * 0.5 * (1.0 + math.cos(math.pi * (1.0 - steering_t)))
+                else:  # step: full beta early, partial mid, zero late
+                    beta_t = beta_max if steering_t > 0.7 else (beta_max * 0.3 if steering_t > 0.3 else 0.0)
+
+                if abs(beta_t) > 1e-6:
+                    # Build CDR pair mask [n_tokens, n_tokens]
+                    cdr_pair_mask = cdr_mask.unsqueeze(-1) & cdr_mask.unsqueeze(-2)
+                    # [1, n_tokens, n_tokens, 1] for broadcasting with token_trans_bias
+                    mask_4d = cdr_pair_mask.unsqueeze(0).unsqueeze(-1).float()
+
+                    # Scale token_trans_bias: bias *= (1 + beta_t * mask)
+                    dc = network_condition_kwargs["diffusion_conditioning"]
+                    original_token_trans_bias = dc["token_trans_bias"]
+                    dc["token_trans_bias"] = original_token_trans_bias * (1.0 + beta_t * mask_4d)
+                    hierarchical_bias_applied = True
+
             with torch.no_grad():
                 atom_coords_denoised = torch.zeros_like(atom_coords_noisy)
                 sample_ids = torch.arange(multiplicity).to(atom_coords_noisy.device)
@@ -403,6 +443,10 @@ class AtomDiffusion(Module):
                         ),
                     )
                     atom_coords_denoised[sample_ids_chunk] = atom_coords_denoised_chunk
+
+            # Restore original token_trans_bias after forward pass
+            if hierarchical_bias_applied and original_token_trans_bias is not None:
+                network_condition_kwargs["diffusion_conditioning"]["token_trans_bias"] = original_token_trans_bias
 
                 if steering_args["fk_steering"] and (
                     (

@@ -93,7 +93,12 @@ class DiffusionConditioning(Module):
         )
 
         # Apply CDR3 beta scaling if enabled
-        if "cdr3_token_mask" in feats and "cdr3_beta_value" in feats:
+        # Skip static beta scaling when hierarchical steering is active (it handles beta per-step)
+        hierarchical_active = (
+            "hierarchical_cdr_token_mask" in feats
+            and feats["hierarchical_cdr_token_mask"].any()
+        )
+        if not hierarchical_active and "cdr3_token_mask" in feats and "cdr3_beta_value" in feats:
             cdr3_mask = feats["cdr3_token_mask"].to(z.device).to(torch.bool)
             cdr3_beta = feats["cdr3_beta_value"].to(z.device)
             beta_val = float(cdr3_beta.item())
