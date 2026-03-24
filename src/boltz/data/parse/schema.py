@@ -1888,6 +1888,13 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
                     base_dir = yaml_dir if yaml_dir is not None else Path(".")
                     pdb_path = str(base_dir / pdb_path)
 
+            if pdb_path is not None and not Path(pdb_path).exists():
+                click.echo(
+                    f"Warning: Predicted epitope PDB not found at {pdb_path}, "
+                    "skipping epitope extraction (will use full antigen surface)"
+                )
+                pdb_path = None
+
             if pdb_path is not None:
                 epitope_threshold = hier_data.get("epitope_contact_threshold", 10.0)
 
