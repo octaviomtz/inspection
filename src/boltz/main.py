@@ -564,13 +564,15 @@ def process_input(  # noqa: C901, PLR0912, PLR0915, D103
     processed_mols_dir: Path,
     structure_dir: Path,
     records_dir: Path,
+    predicted_epitope_pdbs: Optional[str] = None,
+    code: Optional[str] = None,
 ) -> None:
     try:
         # Parse data
         if path.suffix.lower() in (".fa", ".fas", ".fasta"):
             target = parse_fasta(path, ccd, mol_dir, boltz2)
         elif path.suffix.lower() in (".yml", ".yaml"):
-            target = parse_yaml(path, ccd, mol_dir, boltz2)
+            target = parse_yaml(path, ccd, mol_dir, boltz2, predicted_epitope_pdbs=predicted_epitope_pdbs, code=code)
         elif path.is_dir():
             msg = f"Found directory {path} instead of .fasta or .yaml, skipping."
             raise RuntimeError(msg)  # noqa: TRY301
@@ -699,6 +701,8 @@ def process_inputs(
     api_key_value: Optional[str] = None,
     boltz2: bool = False,
     preprocessing_threads: int = 1,
+    predicted_epitope_pdbs: Optional[str] = None,
+    code: Optional[str] = None,
 ) -> Manifest:
     """Process the input data and output directory.
 
@@ -811,6 +815,8 @@ def process_inputs(
         processed_mols_dir=processed_mols_dir,
         structure_dir=structure_dir,
         records_dir=records_dir,
+        predicted_epitope_pdbs=predicted_epitope_pdbs,
+        code=code,
     )
 
     # Parse input data
@@ -1021,6 +1027,22 @@ def cli() -> None:
          "Define using hierarchical_steering constraints in YAML.",
 )
 @click.option(
+    "--predicted_epitope_pdbs",
+    type=click.Path(exists=False),
+    default=None,
+    help="Path to folder containing predicted PDB structures for epitope extraction. "
+         "The PDB path for each complex is inferred as: "
+         "<predicted_epitope_pdbs>/boltz_results_<code>/predictions/<code>/<code>_model_0.pdb. "
+         "Use with --hierarchical_steering.",
+)
+@click.option(
+    "--code",
+    type=str,
+    default=None,
+    help="Complex code (e.g. 7TRH_HBG) used to locate the predicted epitope PDB. "
+         "If not provided, the YAML filename stem is used as the code.",
+)
+@click.option(
     "--num_particles",
     type=int,
     default=3,
@@ -1134,6 +1156,8 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     antigen_steering: bool = False,
     embedding_interface_steering: bool = False,
     hierarchical_steering: bool = False,
+    predicted_epitope_pdbs: Optional[str] = None,
+    code: Optional[str] = None,
     num_particles: int = 3,
     model: Literal["boltz1", "boltz2"] = "boltz2",
     method: Optional[str] = None,
@@ -1242,6 +1266,8 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         boltz2=model == "boltz2",
         preprocessing_threads=preprocessing_threads,
         max_msa_seqs=max_msa_seqs,
+        predicted_epitope_pdbs=predicted_epitope_pdbs,
+        code=code,
     )
 
     # Load manifest

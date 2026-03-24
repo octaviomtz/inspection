@@ -1024,6 +1024,8 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
     mol_dir: Optional[Path] = None,
     boltz_2: bool = False,
     yaml_dir: Optional[Path] = None,
+    predicted_epitope_pdbs: Optional[str] = None,
+    code: Optional[str] = None,
 ) -> Target:
     """Parse a Boltz input yaml / json.
 
@@ -1865,14 +1867,28 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
             force = hier_data.get("force", True)
 
             # Extract predicted epitope residues from PDB if provided (Y+.3)
+            # Priority: CLI --predicted_epitope_pdbs flag > YAML predicted_epitope_pdb field
             epitope_residues = None
-            if "predicted_epitope_pdb" in hier_data:
+            pdb_path = None
+
+            if predicted_epitope_pdbs is not None:
+                # Construct PDB path from CLI args: <folder>/boltz_results_<code>/predictions/<code>/<code>_model_0.pdb
+                epitope_code = code if code is not None else name
+                pdb_path = str(
+                    Path(predicted_epitope_pdbs)
+                    / f"boltz_results_{epitope_code}"
+                    / "predictions"
+                    / epitope_code
+                    / f"{epitope_code}_model_0.pdb"
+                )
+            elif "predicted_epitope_pdb" in hier_data:
                 pdb_path = hier_data["predicted_epitope_pdb"]
                 # Resolve relative paths from the YAML file location
                 if not Path(pdb_path).is_absolute():
                     base_dir = yaml_dir if yaml_dir is not None else Path(".")
                     pdb_path = str(base_dir / pdb_path)
 
+            if pdb_path is not None:
                 epitope_threshold = hier_data.get("epitope_contact_threshold", 10.0)
 
                 # Build CDR region definitions using chain names for PDB parsing
