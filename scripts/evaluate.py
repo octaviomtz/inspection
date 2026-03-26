@@ -9,9 +9,7 @@ Methods:
   B0   - Unconstrained (antigen_cut)
   B1   - Contact restraints (antigen_cut_contact_restraints)
   B2   - Pocket restraints (antigen_cut_vhvl_msa_pocket_ab_boltz_post_2023_omm)
-  NF_R1 - Round 1: CDR3 beta-scaling (new_feature_cdr3_beta)
-  NF_V2 - Round 2: FK Particles v2 (new_feature_fk_v2)
-  NF_H  - Hierarchical steering (new_feature_hierarchical)
+  NF_V2 - FK Particles v2 (new_feature_fk_v2)
 """
 
 import argparse
@@ -47,9 +45,7 @@ METHOD_SUBDIRS = {
     "B0": "antigen_cut",
     "B1": "antigen_cut_contact_restraints",
     "B2": "antigen_cut_vhvl_msa_pocket_ab_boltz_post_2023_omm",
-    "NF_R1": "new_feature_cdr3_beta",
     "NF_V2": "new_feature_fk_v2",
-    "NF_H": "new_feature_hierarchical",
 }
 
 # Built at runtime by _build_method_dirs(); discover functions read from this.
@@ -65,9 +61,7 @@ METHOD_LABELS = {
     "B0": "Unconstrained",
     "B1": "Contact restraints",
     "B2": "Pocket restraints",
-    "NF_R1": "CDR3 beta-scaling (R1)",
-    "NF_V2": "FK Particles v2 (R2)",
-    "NF_H": "Hierarchical steering",
+    "NF_V2": "FK Particles v2",
 }
 
 CAPRI_THRESHOLDS = [
@@ -190,30 +184,6 @@ def discover_b2(complex_ids):
     return results
 
 
-def discover_nf_r1(complex_ids):
-    """
-    NF_R1: Round 1 CDR3 beta-scaling predictions.
-    Layout: boltz_results_{CID}_cdr3_beta/predictions/{CID}_cdr3_beta/
-    """
-    results = {}
-    base = METHOD_DIRS["NF_R1"]
-    if not base.exists():
-        return results
-
-    for cid in complex_ids:
-        # Primary layout: _cdr3_beta suffix
-        result_dir = base / f"boltz_results_{cid}_cdr3_beta" / "predictions" / f"{cid}_cdr3_beta"
-        if not result_dir.exists():
-            # Fallback: no suffix
-            result_dir = base / f"boltz_results_{cid}" / "predictions" / cid
-        if not result_dir.exists():
-            continue
-        models = _find_prediction_files(result_dir)
-        if models:
-            results[cid] = [{"setting": "cdr3_beta_scaling", "models": models}]
-    return results
-
-
 def discover_nf_v2(complex_ids):
     """
     NF_V2: FK Particles v2 predictions.
@@ -240,37 +210,13 @@ def discover_nf_v2(complex_ids):
     return results
 
 
-def discover_nf_h(complex_ids):
-    """
-    NF_H: Hierarchical steering predictions.
-    Layout: boltz_results_{CID}_hierarchical/predictions/{CID}_hierarchical/
-    """
-    results = {}
-    base = METHOD_DIRS["NF_H"]
-    if not base.exists():
-        return results
-
-    for cid in complex_ids:
-        result_dir = base / f"boltz_results_{cid}_hierarchical" / "predictions" / f"{cid}_hierarchical"
-        if not result_dir.exists():
-            result_dir = base / f"boltz_results_{cid}" / "predictions" / cid
-        if not result_dir.exists():
-            continue
-        models = _find_prediction_files(result_dir)
-        if models:
-            results[cid] = [{"setting": "hierarchical_steering", "models": models}]
-    return results
-
-
-ALL_METHODS = ["B0", "B1", "B2", "NF_R1", "NF_V2", "NF_H"]
+ALL_METHODS = ["B0", "B1", "B2", "NF_V2"]
 
 DISCOVER_FUNCS = {
     "B0": discover_b0,
     "B1": discover_b1,
     "B2": discover_b2,
-    "NF_R1": discover_nf_r1,
     "NF_V2": discover_nf_v2,
-    "NF_H": discover_nf_h,
 }
 
 
@@ -734,12 +680,10 @@ METHOD_COLORS = {
     "B0": "#7f8c8d",   # gray
     "B1": "#2980b9",   # blue
     "B2": "#8e44ad",   # purple
-    "NF_R1": "#e67e22", # orange
     "NF_V2": "#e74c3c", # red
-    "NF_H": "#27ae60",  # green
 }
 
-METHOD_ORDER = ["B0", "B1", "B2", "NF_R1", "NF_V2", "NF_H"]
+METHOD_ORDER = ["B0", "B1", "B2", "NF_V2"]
 
 
 def _available_methods(df, metric_suffix="DockQ_AbAg"):
@@ -910,42 +854,6 @@ def plot_paired_scatter(df, output_dir, nf_method="NF_V2"):
     ax.spines[["top", "right"]].set_visible(False)
 
     _savefig(fig, output_dir / f"plot_scatter_{nf_method.lower()}_vs_b0.png")
-
-
-def plot_nf_v2_vs_nf_r1(df, output_dir):
-    """Scatter NF_V2 vs NF_R1 per-complex DockQ_AbAg (confidence selection)."""
-    v2_col = "NF_V2_DockQ_AbAg"
-    r1_col = "NF_R1_DockQ_AbAg"
-    if v2_col not in df.columns or r1_col not in df.columns:
-        return
-    paired = df[[r1_col, v2_col]].dropna()
-    if len(paired) < 3:
-        return
-
-    fig, ax = plt.subplots(figsize=(6, 6))
-    lim = max(paired[r1_col].max(), paired[v2_col].max()) * 1.1
-    lim = max(lim, 0.1)
-    ax.plot([0, lim], [0, lim], "k--", alpha=0.3, linewidth=1, zorder=0)
-    ax.scatter(paired[r1_col], paired[v2_col],
-               s=30, alpha=0.7, color=METHOD_COLORS["NF_V2"], edgecolors="white",
-               linewidth=0.4, zorder=2)
-
-    n_above = (paired[v2_col] > paired[r1_col]).sum()
-    n_below = (paired[v2_col] < paired[r1_col]).sum()
-    n_equal = (paired[v2_col] == paired[r1_col]).sum()
-    ax.text(0.05, 0.92, f"V2 wins: {n_above}\nR1 wins: {n_below}\nTied: {n_equal}",
-            transform=ax.transAxes, fontsize=9, va="top",
-            bbox=dict(boxstyle="round,pad=0.3", facecolor="wheat", alpha=0.5))
-
-    ax.set_xlabel(f"NF_R1 ({METHOD_LABELS['NF_R1']}) DockQ Ab-Ag")
-    ax.set_ylabel(f"NF_V2 ({METHOD_LABELS['NF_V2']}) DockQ Ab-Ag")
-    ax.set_title("Per-Complex: FK v2 vs CDR3 beta (confidence selection)")
-    ax.set_xlim(-0.02, lim)
-    ax.set_ylim(-0.02, lim)
-    ax.set_aspect("equal")
-    ax.spines[["top", "right"]].set_visible(False)
-
-    _savefig(fig, output_dir / "plot_scatter_nf_v2_vs_nf_r1.png")
 
 
 def plot_delta_waterfall(df, output_dir, nf_method="NF_V2"):
@@ -1228,10 +1136,7 @@ def generate_all_plots(all_results, output_dir):
     plot_capri_stacked(df_conf, df_oracle, output_dir)
     plot_boxplot_dockq(df_conf, df_oracle, output_dir)
     plot_paired_scatter(df_conf, output_dir, "NF_V2")
-    plot_paired_scatter(df_conf, output_dir, "NF_R1")
-    plot_nf_v2_vs_nf_r1(df_conf, output_dir)
     plot_delta_waterfall(df_conf, output_dir, "NF_V2")
-    plot_delta_waterfall(df_conf, output_dir, "NF_R1")
     plot_confidence_vs_dockq(all_results, output_dir)
     plot_fk_energy_vs_dockq(all_results, output_dir)
     plot_irmsd_bars(df_conf, output_dir)
