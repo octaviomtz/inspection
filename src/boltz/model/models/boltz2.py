@@ -521,7 +521,7 @@ class Boltz2(LightningModule):
             ):
                 if self.checkpoint_diffusion_conditioning and self.training:
                     # TODO decide whether this should be with bf16 or not
-                    q, c, to_keys, atom_enc_bias, atom_dec_bias, token_trans_bias = (
+                    q, c, to_keys, atom_enc_bias, atom_dec_bias, token_trans_bias, cdr3_token_trans_delta = (
                         torch.utils.checkpoint.checkpoint(
                             self.diffusion_conditioning,
                             s,
@@ -531,7 +531,7 @@ class Boltz2(LightningModule):
                         )
                     )
                 else:
-                    q, c, to_keys, atom_enc_bias, atom_dec_bias, token_trans_bias = (
+                    q, c, to_keys, atom_enc_bias, atom_dec_bias, token_trans_bias, cdr3_token_trans_delta = (
                         self.diffusion_conditioning(
                             s_trunk=s,
                             z_trunk=z,
@@ -547,6 +547,9 @@ class Boltz2(LightningModule):
                     "atom_dec_bias": atom_dec_bias,
                     "token_trans_bias": token_trans_bias,
                 }
+                # L+.4: store delta for time-varying CDR3 bias in DiffusionModule
+                if cdr3_token_trans_delta is not None:
+                    diffusion_conditioning["cdr3_token_trans_delta"] = cdr3_token_trans_delta
 
                 with torch.autocast("cuda", enabled=False):
                     struct_out = self.structure_module.sample(

@@ -1,0 +1,29 @@
+sequences:
+- protein:
+    id: A
+    sequence: APLHLGKCNIAGWILGNPECESLSTASSWSYIVETPSSDNGTCYPGDFIDYEELREQLSSVSSFERFEIFPKTSSWPNHDSDKGVTAACPHAGAKSFYKNLIWLVKKGNSYPKLSKSYINDKGKEVLVLWGIHHPSTSADQQSLYQNADAYVFVGSSRYSKTFKPEIAIRPKVRDREGRMNYYWTLVEPGDKITFEATGNLVVPRYAFAMERNA
+    msa: ../msa_antigen_cut_new/antigen_7TRH_HBG.a3m
+- protein:
+    id: B
+    sequence: EVQLVESGGGLIQPGGSLRLSCEASAFTFSSYEMNWVRQAPGKGLEWVSYITSSGSRIYYADSVKGRFTISRDNAKNSLYLQMNSLRVEDTAVYYCARLLDSIVWGEGWYYGMDVWGQGTTVTVSG
+    msa: empty
+- protein:
+    id: C
+    sequence: SYELTQSPSVSVAPGRTARITCGGNDIGLKGVHWYQQKPGQAPVLVLYDNNHRPSGIPERFSGSISGDTATLTVTRVEADDGADYFCQVWDTSSGPPHVIFGGGTKLTVL
+    msa: empty
+
+constraints:
+  - cdr3_beta_scaling:
+      beta: 0.12            # L+.1: reduced default beta (from 0.3 → 0.12)
+      antigen_chain: A      # L+.3: enable CDR3-antigen interface pair scaling
+      cdr3_antigen_beta: 0.15  # L+.3: attract CDR3 loops toward antigen
+      time_decay: true      # L+.4: beta(t) = beta_max * t (decays to 0 at end of diffusion)
+      cdr3_regions:
+        - chain: B          # Heavy chain CDR3-H3: residues 97-115
+          start_res: 97
+          end_res: 115
+          beta: 0.15        # L+.2: H3 stronger (dominant loop)
+        - chain: C          # Light chain CDR3-L3: residues 88-100
+          start_res: 88
+          end_res: 100
+          beta: 0.05        # L+.2: L3 weaker (reduced to avoid accuracy penalty)

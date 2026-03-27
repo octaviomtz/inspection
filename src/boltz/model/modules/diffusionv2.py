@@ -150,14 +150,31 @@ class DiffusionModule(Module):
         # Full self-attention on token level
         a = a + self.s_to_a_linear(s)
 
+        # L+.4: Apply time-varying CDR3 beta scaling to token transformer bias.
+        # effective_bias = token_trans_bias_base + t_scale * cdr3_delta
+        # When time_decay=False: t_scale=1.0 → full CDR3 scaling (same as original L)
+        # When time_decay=True:  t_scale=steering_t (1→0) → decays to zero at end
+        if "cdr3_token_trans_delta" in diffusion_conditioning:
+            cdr3_time_decay_feat = feats.get("cdr3_time_decay")
+            time_decay_enabled = (
+                cdr3_time_decay_feat is not None
+                and float(cdr3_time_decay_feat.flatten()[0].item()) > 0.5
+            )
+            current_t = float(feats.get("current_steering_t", 1.0))
+            t_scale = current_t if time_decay_enabled else 1.0
+            effective_token_trans_bias = (
+                diffusion_conditioning["token_trans_bias"]
+                + t_scale * diffusion_conditioning["cdr3_token_trans_delta"]
+            )
+        else:
+            effective_token_trans_bias = diffusion_conditioning["token_trans_bias"]
+
         mask = feats["token_pad_mask"].repeat_interleave(multiplicity, 0)
         a = self.token_transformer(
             a,
             mask=mask.float(),
             s=s,
-            bias=diffusion_conditioning[
-                "token_trans_bias"
-            ].float(),  # note z is not expanded with multiplicity until after bias is computed
+            bias=effective_token_trans_bias.float(),  # note z is not expanded with multiplicity until after bias is computed
             multiplicity=multiplicity,
         )
         a = self.a_norm(a)
@@ -382,6 +399,10 @@ class AtomDiffusion(Module):
 
             t_hat = sigma_tm * (1 + gamma)
             steering_t = 1.0 - (step_idx / num_sampling_steps)
+
+            # Expose current diffusion timestep to DiffusionModule for L+.4 time-varying beta
+            if "feats" in network_condition_kwargs:
+                network_condition_kwargs["feats"]["current_steering_t"] = steering_t
             noise_var = self.noise_scale**2 * (t_hat**2 - sigma_tm**2)
             eps = sqrt(noise_var) * torch.randn(shape, device=self.device)
             atom_coords_noisy = atom_coords + eps

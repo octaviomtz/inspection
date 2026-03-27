@@ -1,0 +1,29 @@
+sequences:
+- protein:
+    id: A
+    sequence: TNLCPFDEVFNATRFASVYAWNRKRISNCVADYSVLYNFAPFFAFKCYGVSPTKLNDLCFTNVYADSFVIRGNEVSQIAPGQTGNIADYNYKLPDDFTGCVIAWNSNKLDSKVGGNYNYRYRLFRKSNLKPFERDISTEIYQAGNKPCNGVAGVNCYFPLQSYGFRPTYGVGHQPYRVVVLSFELLHAPATVCG
+    msa: examples/msa_antigen_cut_new/antigen_8IX3_HLG.a3m
+- protein:
+    id: B
+    sequence: EVQLVESGGGLVQPGRSLRLSCAASGFKFDDYAMHWVRQAPGKGLEWVSGTSWNSGTTGYADSVRGRFTISRDNAKKSLYLQMNSLGVEDTAFYYCVKDSNYDSSGYLINNFDYWGQGILVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: DIQLTQSPSFLSASVGDRVTITCRASQGIDKYLAWYQQKPGQAPKVLIYAASTLHSGVPSRFSGSGSGTDFTLTISSLQPEDFATYYCQQLYTFPVTFGPGTKVDVR
+    msa: empty
+
+constraints:
+  - cdr3_beta_scaling:
+      beta: 0.12
+      antigen_chain: A
+      cdr3_antigen_beta: 0.15
+      time_decay: true
+      cdr3_regions:
+        - chain: B
+          start_res: 97
+          end_res: 114
+          beta: 0.15
+        - chain: C
+          start_res: 89
+          end_res: 97
+          beta: 0.05

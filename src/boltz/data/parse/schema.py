@@ -1680,10 +1680,24 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
                 msg = "cdr3_beta_scaling constraint requires cdr3_regions"
                 raise ValueError(msg)
 
-            # Extract beta value (default 0.0 = no scaling)
-            beta_value = beta_data.get("beta", 0.0)
+            # Default beta value used when a region doesn't specify its own (L+.1/L+.2)
+            default_beta = float(beta_data.get("beta", 0.0))
 
-            # Parse CDR3 regions (same format as antigen_orientation)
+            # L+.3: Optional antigen chain for CDR3-antigen interface pair scaling
+            antigen_chain_id = -1
+            if "antigen_chain" in beta_data:
+                antigen_chain_name = beta_data["antigen_chain"]
+                if antigen_chain_name not in chain_to_idx:
+                    msg = f"Antigen chain {antigen_chain_name} not found in input!"
+                    raise ValueError(msg)
+                antigen_chain_id = chain_to_idx[antigen_chain_name]
+
+            cdr3_antigen_beta = float(beta_data.get("cdr3_antigen_beta", 0.0))
+
+            # L+.4: Time-dependent beta schedule beta(t) = beta_max * t
+            time_decay = bool(beta_data.get("time_decay", False))
+
+            # Parse CDR3 regions; each region may override beta (L+.2 asymmetric scaling)
             cdr_regions = []
             for cdr_region in beta_data["cdr3_regions"]:
                 if "chain" not in cdr_region or "start_res" not in cdr_region or "end_res" not in cdr_region:
@@ -1698,10 +1712,12 @@ def parse_boltz_schema(  # noqa: C901, PLR0915, PLR0912
                 cdr_chain_id = chain_to_idx[cdr_chain_name]
                 cdr_start = cdr_region["start_res"] - 1  # Convert to 0-indexed
                 cdr_end = cdr_region["end_res"] - 1  # Convert to 0-indexed
-                cdr_regions.append((cdr_chain_id, cdr_start, cdr_end))
+                # L+.2: per-region beta, falls back to constraint-level default
+                region_beta = float(cdr_region.get("beta", default_beta))
+                cdr_regions.append((cdr_chain_id, cdr_start, cdr_end, region_beta))
 
-            # Store constraint
-            cdr3_beta_constraints.append((beta_value, cdr_regions))
+            # Store constraint in v2 format
+            cdr3_beta_constraints.append((cdr_regions, antigen_chain_id, cdr3_antigen_beta, time_decay))
         elif "embedding_interface" in constraint:
             if not boltz_2:
                 msg = "Embedding interface constraint is not supported in Boltz-1!"

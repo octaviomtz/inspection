@@ -2356,11 +2356,12 @@ def process_antigen_orientation_constraints(
 
 def process_cdr3_beta_constraints(
     data: Tokenized,
-    inference_cdr3_beta_constraints: list[tuple[float, list[tuple[int, int, int]]]],
+    inference_cdr3_beta_constraints: list[tuple[list[tuple[int, int, int, float]], int, float, bool]],
 ):
-    """Process CDR3 beta scaling constraints.
+    """Process CDR3 beta scaling constraints (v2).
 
-    Creates feature tensors for CDR3-specific pair representation scaling.
+    Supports asymmetric per-CDR betas (L+.2), CDR3-antigen interface scaling (L+.3),
+    and time-dependent beta schedule (L+.4).
 
     Parameters
     ----------
@@ -2368,38 +2369,54 @@ def process_cdr3_beta_constraints(
         The tokenized input data.
     inference_cdr3_beta_constraints : list
         List of CDR3 beta scaling constraints. Each tuple contains:
-        (beta_value, cdr_regions)
-        where cdr_regions is a list of (chain_id, start_res, end_res) tuples
+        (cdr_regions, antigen_chain_id, cdr3_antigen_beta, time_decay)
+        where cdr_regions is a list of (chain_id, start_res, end_res, region_beta).
 
     Returns
     -------
     dict
         Dictionary containing:
-        - cdr3_token_mask: [N_tokens] boolean mask for CDR3 residues
-        - cdr3_beta_value: scalar beta scaling value
+        - cdr3_beta_token: [N_tokens] float tensor, per-token beta value (0 for non-CDR3)
+        - cdr3_antigen_token_mask: [N_tokens] bool tensor for antigen residues
+        - cdr3_antigen_beta: scalar beta for CDR3-antigen interface pairs
+        - cdr3_time_decay: 1.0 if time-decay enabled, 0.0 otherwise
     """
     token_data = data.tokens
     num_tokens = len(token_data)
 
-    # Create mask for CDR3 tokens
-    cdr3_mask = torch.zeros(num_tokens, dtype=torch.bool)
-    beta_value = 0.0
+    cdr3_beta_token = torch.zeros(num_tokens, dtype=torch.float32)
+    antigen_token_mask = torch.zeros(num_tokens, dtype=torch.bool)
+    cdr3_antigen_beta = 0.0
+    time_decay_flag = False
 
-    for beta_val, cdr_regions in inference_cdr3_beta_constraints:
-        beta_value = beta_val  # Use the last (only) constraint for now
+    for cdr_regions, antigen_chain_id, constraint_antigen_beta, constraint_time_decay in inference_cdr3_beta_constraints:
+        time_decay_flag = constraint_time_decay
+        cdr3_antigen_beta = constraint_antigen_beta
 
-        for cdr_chain_id, start_res, end_res in cdr_regions:
+        # Assign per-token beta values for each CDR region (L+.2)
+        for cdr_chain_id, start_res, end_res, region_beta in cdr_regions:
             for idx, token in enumerate(token_data):
                 if (
                     token["asym_id"] == cdr_chain_id
                     and token["mol_type"] == const.chain_type_ids["PROTEIN"]
                     and start_res <= token["res_idx"] <= end_res
                 ):
-                    cdr3_mask[idx] = True
+                    cdr3_beta_token[idx] = region_beta
+
+        # Build antigen token mask for CDR3-antigen interface scaling (L+.3)
+        if antigen_chain_id >= 0:
+            for idx, token in enumerate(token_data):
+                if (
+                    token["asym_id"] == antigen_chain_id
+                    and token["mol_type"] == const.chain_type_ids["PROTEIN"]
+                ):
+                    antigen_token_mask[idx] = True
 
     return {
-        "cdr3_token_mask": cdr3_mask,
-        "cdr3_beta_value": torch.tensor([beta_value], dtype=torch.float32),
+        "cdr3_beta_token": cdr3_beta_token,
+        "cdr3_antigen_token_mask": antigen_token_mask,
+        "cdr3_antigen_beta": torch.tensor([cdr3_antigen_beta], dtype=torch.float32),
+        "cdr3_time_decay": torch.tensor([1.0 if time_decay_flag else 0.0], dtype=torch.float32),
     }
 
 
@@ -2539,7 +2556,7 @@ class Boltz2Featurizer:
             list[tuple[int, float, list[tuple[int, int, int]], bool]]
         ] = None,
         inference_cdr3_beta_constraints: Optional[
-            list[tuple[float, list[tuple[int, int, int]]]]
+            list[tuple[list[tuple[int, int, int, float]], int, float, bool]]
         ] = None,
         inference_embedding_interface_constraints: Optional[
             list[tuple[int, float, list[tuple[int, int, int]], bool]]

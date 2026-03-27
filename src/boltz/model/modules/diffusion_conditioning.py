@@ -92,36 +92,97 @@ class DiffusionConditioning(Module):
             relative_position_encoding,
         )
 
-        # Apply CDR3 beta scaling if enabled
-        if "cdr3_token_mask" in feats and "cdr3_beta_value" in feats:
+        # cdr3_token_trans_delta is returned alongside token_trans_bias for time-varying
+        # beta support (L+.4). None when CDR3 features are absent.
+        cdr3_token_trans_delta = None
+
+        if "cdr3_beta_token" in feats:
+            # --- CDR3 Beta-Scaling v2 (L+.2, L+.3, L+.4) ---
+            cdr3_beta_token = feats["cdr3_beta_token"].to(z.device)
+            if cdr3_beta_token.dim() == 2:
+                cdr3_beta_token = cdr3_beta_token.squeeze(0)
+
+            # L+.2: Asymmetric pair beta via geometric mean.
+            # H3-H3 → beta_H3, L3-L3 → beta_L3, H3-L3 → sqrt(beta_H3 * beta_L3)
+            beta_i = cdr3_beta_token.unsqueeze(-1)   # [n, 1]
+            beta_j = cdr3_beta_token.unsqueeze(-2)   # [1, n]
+            cdr3_pair_beta = torch.sqrt(beta_i * beta_j)  # [n, n], 0 for non-CDR3 pairs
+
+            # L+.3: CDR3-antigen interface pair scaling (attract CDR3 toward antigen)
+            antigen_pair_beta = torch.zeros_like(cdr3_pair_beta)
+            if "cdr3_antigen_token_mask" in feats and "cdr3_antigen_beta" in feats:
+                antigen_mask = feats["cdr3_antigen_token_mask"].to(z.device).to(torch.bool)
+                antigen_beta_val = feats["cdr3_antigen_beta"].to(z.device).flatten()[0].item()
+                if antigen_mask.dim() == 2:
+                    antigen_mask = antigen_mask.squeeze(0)
+                if abs(antigen_beta_val) > 1e-6 and antigen_mask.any():
+                    cdr3_any_mask = cdr3_beta_token > 0  # any CDR3 token
+                    # Both CDR3→antigen and antigen→CDR3 directions
+                    cdr3_antigen_pair = (
+                        (cdr3_any_mask.unsqueeze(-1) & antigen_mask.unsqueeze(-2)) |
+                        (antigen_mask.unsqueeze(-1) & cdr3_any_mask.unsqueeze(-2))
+                    )  # [n, n]
+                    antigen_pair_beta = antigen_beta_val * cdr3_antigen_pair.float()
+
+            # Combined full pair scaling factor [n, n]
+            full_pair_scale_2d = 1.0 + cdr3_pair_beta + antigen_pair_beta
+            scale_4d = full_pair_scale_2d.unsqueeze(0).unsqueeze(-1)  # [1, n, n, 1]
+
+            # Use fully-scaled z for atom encoder (static at beta_max; approximation for L+.4)
+            z_for_atom = z * scale_4d
+
+            # Compute token_trans_bias from BASE z (no CDR3 scaling) so that L+.4 can
+            # apply time-varying interpolation: effective_bias = base + t * delta
+            token_trans_bias_parts = []
+            for layer in self.token_trans_proj_z:
+                token_trans_bias_parts.append(layer(z))
+            token_trans_bias = torch.cat(token_trans_bias_parts, dim=-1)
+
+            # L+.4: delta = (scale - 1) * base_bias
+            # In DiffusionModule: effective = base + t_scale * delta
+            # t_scale=1.0 (static) → full CDR3 scaling; t_scale=steering_t → time-varying
+            cdr3_token_trans_delta = (scale_4d - 1.0) * token_trans_bias
+
+            q, c, p, to_keys = self.atom_encoder(
+                feats=feats,
+                s_trunk=s_trunk,
+                z=z_for_atom,
+            )
+
+        elif "cdr3_token_mask" in feats and "cdr3_beta_value" in feats:
+            # Legacy fallback: original uniform CDR3 beta scaling
             cdr3_mask = feats["cdr3_token_mask"].to(z.device).to(torch.bool)
             cdr3_beta = feats["cdr3_beta_value"].to(z.device)
             beta_val = float(cdr3_beta.item())
-
-            # cdr3_mask might have batch dimension [batch, n_tokens] or just [n_tokens]
             if cdr3_mask.dim() == 2:
-                # Remove batch dimension
                 cdr3_mask = cdr3_mask.squeeze(0)
-
-            if abs(beta_val) > 1e-6:  # Only apply if non-zero
-                # Create pair mask: True for (i,j) where both i and j are in CDR3
-                # cdr3_mask shape: [n_tokens], z shape: [batch, n_tokens, n_tokens, tz]
-                cdr3_mask_i = cdr3_mask.unsqueeze(-1)  # [n_tokens, 1]
-                cdr3_mask_j = cdr3_mask.unsqueeze(-2)  # [1, n_tokens]
-                cdr3_pair_mask = (cdr3_mask_i & cdr3_mask_j)  # [n_tokens, n_tokens]
-
-                # Apply scaling: z[CDR3] *= (1 + beta)
-                # Add batch and feature dimensions for broadcasting: [1, n_tokens, n_tokens, 1]
+            if abs(beta_val) > 1e-6:
+                cdr3_mask_i = cdr3_mask.unsqueeze(-1)
+                cdr3_mask_j = cdr3_mask.unsqueeze(-2)
+                cdr3_pair_mask = (cdr3_mask_i & cdr3_mask_j)
                 scaling_tensor = cdr3_pair_mask.unsqueeze(0).unsqueeze(-1).float()
-                scaling_factor = 1.0 + beta_val * scaling_tensor
+                z = z * (1.0 + beta_val * scaling_tensor)
 
-                z = z * scaling_factor
+            q, c, p, to_keys = self.atom_encoder(
+                feats=feats,
+                s_trunk=s_trunk,
+                z=z,
+            )
+            token_trans_bias_parts = []
+            for layer in self.token_trans_proj_z:
+                token_trans_bias_parts.append(layer(z))
+            token_trans_bias = torch.cat(token_trans_bias_parts, dim=-1)
 
-        q, c, p, to_keys = self.atom_encoder(
-            feats=feats,
-            s_trunk=s_trunk,  # Float['b n ts'],
-            z=z,  # Float['b n n tz'],
-        )
+        else:
+            q, c, p, to_keys = self.atom_encoder(
+                feats=feats,
+                s_trunk=s_trunk,
+                z=z,
+            )
+            token_trans_bias_parts = []
+            for layer in self.token_trans_proj_z:
+                token_trans_bias_parts.append(layer(z))
+            token_trans_bias = torch.cat(token_trans_bias_parts, dim=-1)
 
         atom_enc_bias = []
         for layer in self.atom_enc_proj_z:
@@ -133,9 +194,4 @@ class DiffusionConditioning(Module):
             atom_dec_bias.append(layer(p))
         atom_dec_bias = torch.cat(atom_dec_bias, dim=-1)
 
-        token_trans_bias = []
-        for layer in self.token_trans_proj_z:
-            token_trans_bias.append(layer(z))
-        token_trans_bias = torch.cat(token_trans_bias, dim=-1)
-
-        return q, c, to_keys, atom_enc_bias, atom_dec_bias, token_trans_bias
+        return q, c, to_keys, atom_enc_bias, atom_dec_bias, token_trans_bias, cdr3_token_trans_delta

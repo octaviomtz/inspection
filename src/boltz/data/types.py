@@ -538,10 +538,13 @@ class InferenceOptions:
     antigen_orientation_constraints: Optional[
         list[tuple[int, float, list[tuple[int, int, int]], bool]]
     ] = None
-    # CDR3 beta scaling constraints: (beta_value, cdr_regions)
-    # cdr_regions is a list of (chain_id, start_res, end_res) tuples
+    # CDR3 beta scaling constraints v2: (cdr_regions, antigen_chain_id, cdr3_antigen_beta, time_decay)
+    # cdr_regions is a list of (chain_id, start_res, end_res, region_beta) tuples (L+.2: per-region beta)
+    # antigen_chain_id: -1 if CDR-antigen scaling not used (L+.3)
+    # cdr3_antigen_beta: beta for CDR3-antigen interface pairs, 0.0 if not used (L+.3)
+    # time_decay: True for linear time-decay schedule beta(t)=beta_max*t (L+.4)
     cdr3_beta_constraints: Optional[
-        list[tuple[float, list[tuple[int, int, int]]]]
+        list[tuple[list[tuple[int, int, int, float]], int, float, bool]]
     ] = None
     # Embedding interface constraints: (antigen_chain_id, contact_threshold, cdr_regions, force)
     # Uses pair embeddings to weight distance-based interface steering
