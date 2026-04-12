@@ -1,0 +1,33 @@
+sequences:
+- protein:
+    id: A
+    sequence: FIRTELSFIKNNVPCIRDMFFIYKRELYNICLDDLKGEEDETHIYVQKKVKDSWITLNDLFKETDLTGRPHIFAYVDVEEIIILLCEDEEFSNRKKDMTCHRFYSNDGKEYNNAEITISDYILKDKLLSSYVSLPLKIENREYFLICGVSPYKFKDDNKKDDILCMASHDKGETWGTKIVIKYDNYKLGVQYFFLRPYISKNDLSFHFYVGDNINNVKNVNFIECTHEKDLEFVCSNRDFLKDNKVLQDVSTLNDEYIVSYGNDNNFAECYIFFNNENSILIKPEKYGNTAGCYGGTFVKIDENRALFIYSSSQGIYNIHTIYY
+    msa: msa_antigen_cut_new/antigen_8CDE_DCB.a3m
+- protein:
+    id: B
+    sequence: AVTLDESGGGLQTPGGALSLVCKGSGFFSFSSYTMQWVRQAPGKGLEWVASISSGGGTNYGAAVKGRATISRDNGQSTLRLQLNNLRAEDTGTYYCAKHGVNGCDWSYSVGCVDAWGHGTEVIVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: ALTQPSSVSANPGETVKITCSGGSSSYYGWYQQKSPGSAPVTLIYNNQKRPSDIPSRFSGSKSGSTGTLTITGVQAEDEAVYFCGSRDNSGGIFGAGTTLTVL
+    msa: empty
+constraints:
+- contact:
+    token1: [A, 115]
+    token2: [B, 65]
+    max_distance: 5.0
+    force: true
+- hierarchical_steering:
+    antigen_chain: A
+    contact_threshold: 8.0
+    cdr_regions:
+      - chain: B
+        start_res: 97
+        end_res: 115
+      - chain: C
+        start_res: 85
+        end_res: 93
+    beta_max: 0.4
+    beta_schedule: linear
+    guidance_weight_scale: 1.0
+    force: true

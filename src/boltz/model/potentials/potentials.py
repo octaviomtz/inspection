@@ -1255,7 +1255,8 @@ def get_potentials(steering_args, boltz2=False):
             )
         )
     # Add hierarchical steering potentials (Strategy Y+)
-    if boltz2 and steering_args.get("hierarchical_steering", False):
+    # Skip late-phase potentials when early_only mode is active (Experiment 1: Y early + B2)
+    if boltz2 and steering_args.get("hierarchical_steering", False) and not steering_args.get("hierarchical_steering_early_only", False):
         # Y+.2: Antigen orientation potential — zero in early phase, strong in late phase
         # This is the inverse of standard antigen_steering which is strong early.
         # Early phase is handled by beta-scaling (Y+.1), late phase by coordinate potentials.

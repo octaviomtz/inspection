@@ -1,0 +1,33 @@
+sequences:
+- protein:
+    id: A
+    sequence: TNLCPFDEVFNATRFASVYAWNRKRISNCVADYSVLYNFAPFFAFKCYGVSPTKLNDLCFTNVYADSFVIRGNEVSQIAPGQTGNIADYNYKLPDDFTGCVIAWNSNKLDSKVGGNYNYRYRLFRKSNLKPFERDISTEIYQAGNKPCNGVAGVNCYFPLQSYGFRPTYGVGHQPYRVVVLSFELLHAPATVCG
+    msa: msa_antigen_cut_new/antigen_8IX3_HLG.a3m
+- protein:
+    id: B
+    sequence: EVQLVESGGGLVQPGRSLRLSCAASGFKFDDYAMHWVRQAPGKGLEWVSGTSWNSGTTGYADSVRGRFTISRDNAKKSLYLQMNSLGVEDTAFYYCVKDSNYDSSGYLINNFDYWGQGILVTVSS
+    msa: empty
+- protein:
+    id: C
+    sequence: DIQLTQSPSFLSASVGDRVTITCRASQGIDKYLAWYQQKPGQAPKVLIYAASTLHSGVPSRFSGSGSGTDFTLTISSLQPEDFATYYCQQLYTFPVTFGPGTKVDVR
+    msa: empty
+constraints:
+- contact:
+    token1: [A, 118]
+    token2: [B, 103]
+    max_distance: 5.0
+    force: true
+- hierarchical_steering:
+    antigen_chain: A
+    contact_threshold: 8.0
+    cdr_regions:
+      - chain: B
+        start_res: 97
+        end_res: 114
+      - chain: C
+        start_res: 89
+        end_res: 97
+    beta_max: 0.4
+    beta_schedule: linear
+    guidance_weight_scale: 1.0
+    force: true

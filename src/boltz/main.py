@@ -176,6 +176,7 @@ class BoltzSteeringParams:
     antigen_steering: bool = False
     embedding_interface_steering: bool = False
     hierarchical_steering: bool = False
+    hierarchical_steering_early_only: bool = False
     num_gd_steps: int = 20
 
 
@@ -1027,6 +1028,15 @@ def cli() -> None:
          "Define using hierarchical_steering constraints in YAML.",
 )
 @click.option(
+    "--hierarchical_steering_early_only",
+    is_flag=True,
+    help="Enable hierarchical steering in early-phase only mode (Strategy Y+ early): "
+         "time-varying CDR beta-scaling only, with no late-phase coordinate potentials. "
+         "Designed for combination with B2 contact restraints, where the coordinate-space "
+         "restraints replace the late-phase potentials. Requires --use_potentials. "
+         "Define using hierarchical_steering constraints in YAML.",
+)
+@click.option(
     "--predicted_epitope_pdbs",
     type=click.Path(exists=False),
     default=None,
@@ -1156,6 +1166,7 @@ def predict(  # noqa: C901, PLR0915, PLR0912
     antigen_steering: bool = False,
     embedding_interface_steering: bool = False,
     hierarchical_steering: bool = False,
+    hierarchical_steering_early_only: bool = False,
     predicted_epitope_pdbs: Optional[str] = None,
     code: Optional[str] = None,
     num_particles: int = 3,
@@ -1406,7 +1417,12 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         steering_args.cdr3_steering = cdr3_steering
         steering_args.antigen_steering = antigen_steering
         steering_args.embedding_interface_steering = embedding_interface_steering
-        steering_args.hierarchical_steering = hierarchical_steering
+        # early_only implies full hierarchical_steering=True (for beta-scaling in diffusion loop)
+        if hierarchical_steering_early_only:
+            steering_args.hierarchical_steering = True
+        else:
+            steering_args.hierarchical_steering = hierarchical_steering
+        steering_args.hierarchical_steering_early_only = hierarchical_steering_early_only
         steering_args.num_particles = num_particles
 
         # Validate CDR3 steering requires potentials
@@ -1427,6 +1443,11 @@ def predict(  # noqa: C901, PLR0915, PLR0912
         # Validate hierarchical steering requires potentials
         if hierarchical_steering and not use_potentials:
             msg = "Hierarchical steering (--hierarchical_steering) requires potentials to be enabled (--use_potentials)"
+            raise click.UsageError(msg)
+
+        # Validate early-only mode requires potentials
+        if hierarchical_steering_early_only and not use_potentials:
+            msg = "Hierarchical steering early-only (--hierarchical_steering_early_only) requires potentials to be enabled (--use_potentials)"
             raise click.UsageError(msg)
 
         model_cls = Boltz2 if model == "boltz2" else Boltz1

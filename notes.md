@@ -1,0 +1,4 @@
+Experiment 1 — "Y (early-phase only)": The document groups Y / Y+ together and the description refers to the beta-scaling component specifically (cdr3_beta_scaling enabled, beta_max=0.3-0.5). Use Y+ (Round 2). Reasons:
+- Y+'s time-varying beta already naturally decays to zero in late diffusion steps — this makes "disable late   potentials" cleaner, because you're effectively just letting the existing decay run to zero and turning off the         ProgressiveAntigenOrientationPotential class explicitly
+- Y (Round 1) uses a constant beta throughout diffusion — you'd need to add a decay schedule manually to avoid   interfering with B2's late-phase coordinate restraints
+- Y+ is the more carefully tuned implementation; its two improvements (time-varying beta + progressive antigen   potential) are separable — keep the former, disable the latter
