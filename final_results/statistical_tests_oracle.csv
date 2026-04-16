@@ -1,0 +1,4 @@
+Comparison,N_paired,NF_V2_mean,Baseline_mean,Delta_mean,Delta_median,p_value,significant
+NF_V2 vs B0,33,0.2888,0.2419,0.0470,0.0023,0.1255,No
+NF_V2 vs B1,32,0.2976,0.5008,-0.2032,-0.0884,0.0000,Yes
+NF_V2 vs B2,24,0.2988,0.2803,0.0185,-0.0002,0.7683,No

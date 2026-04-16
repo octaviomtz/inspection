@@ -1,0 +1,6 @@
+Method,N_models,Spearman_rho,p_value
+B0: Unconstrained,235,0.3801,0.0000
+B1: Contact restraints,2610,0.4433,0.0000
+B2: Pocket restraints,435,0.3590,0.0000
+NF_V2: FK Particles v2,165,0.2157,0.0054
+NF_V2 (FK energy): FK Particles v2,165,0.0218,0.7806

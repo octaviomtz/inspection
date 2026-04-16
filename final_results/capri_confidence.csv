@@ -1,0 +1,5 @@
+Method,N,Incorrect,Acceptable,Medium,High
+B0: Unconstrained,47,36/47 (77%),2/47 (4%),8/47 (17%),1/47 (2%)
+B1: Contact restraints,46,25/46 (54%),6/46 (13%),14/46 (30%),1/46 (2%)
+B2: Pocket restraints,36,26/36 (72%),1/36 (3%),8/36 (22%),1/36 (3%)
+NF_V2: FK Particles v2,33,24/33 (73%),3/33 (9%),5/33 (15%),1/33 (3%)
